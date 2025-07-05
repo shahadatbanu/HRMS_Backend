@@ -3,6 +3,9 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import authRoutes from './routes/auth.js';
+import employeesRoutes from './routes/employees.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -15,6 +18,19 @@ connectDB();
 
 // Routes
 app.use('/api/auth', authRoutes);
+
+// Test route
+app.get('/test', (req, res) => {
+  res.json({ message: 'Server is running!' });
+});
+
+// Serve uploaded images
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Employee routes
+app.use('/api/employees', employeesRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
