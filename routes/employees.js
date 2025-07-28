@@ -42,23 +42,47 @@ router.use(auth);
 router.post('/', upload.single('profileImage'), async (req, res) => {
   try {
     const { firstName, lastName, employeeId, joiningDate, username, email, password, phoneNumber, company, department, designation, about, status } = req.body;
+    const { bankName, accountNo, ifsc, branch } = req.body;
     
     // Check for existing user/email/username/employeeId
     if (await User.findOne({ email })) return res.status(400).json({ message: 'Email already exists' });
     if (await Employee.findOne({ username })) return res.status(400).json({ message: 'Username already exists' });
     if (await Employee.findOne({ employeeId })) return res.status(400).json({ message: 'Employee ID already exists' });
     
+    // Parse date fields from DD-MM-YYYY format to Date objects
+    const parseDate = (dateString) => {
+      if (!dateString) return null;
+      const [day, month, year] = dateString.split('-');
+      const parsedDate = new Date(year, month - 1, day); // month is 0-indexed in Date constructor
+      
+      // Validate the date
+      if (isNaN(parsedDate.getTime())) {
+        return null;
+      }
+      return parsedDate;
+    };
+
+    let parsedJoiningDate = parseDate(joiningDate);
+    if (joiningDate && !parsedJoiningDate) {
+      return res.status(400).json({ message: 'Invalid joining date format. Please use DD-MM-YYYY format.' });
+    }
+    
     // Create User
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ email, password: hashedPassword, role: 'employee' });
     await user.save();
     
+    // Parse other date fields
+    const parsedPassportExpiry = parseDate(req.body.passportExpiry);
+    const parsedBirthday = parseDate(req.body.birthday);
+    const parsedFamilyDateOfBirth = parseDate(req.body.familyInfo?.dateOfBirth);
+
     // Create Employee
     const employee = new Employee({
       firstName,
       lastName,
       employeeId,
-      joiningDate,
+      joiningDate: parsedJoiningDate,
       username,
       email,
       phoneNumber,
@@ -68,7 +92,17 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
       about,
       status: status || 'Active',
       profileImage: req.file ? req.file.filename : undefined,
-      userId: user._id
+      userId: user._id,
+      bankName,
+      accountNo,
+      ifsc,
+      branch,
+      passportExpiry: parsedPassportExpiry,
+      birthday: parsedBirthday,
+      familyInfo: req.body.familyInfo ? {
+        ...req.body.familyInfo,
+        dateOfBirth: parsedFamilyDateOfBirth
+      } : undefined
     });
     await employee.save();
     res.status(201).json({ message: 'Employee and user created', employee });
@@ -113,24 +147,59 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// UPDATE employee (and user email/password if provided)
+// UPDATE employee (and user email if provided)
 router.put('/:id', upload.single('profileImage'), async (req, res) => {
   try {
     const { firstName, lastName, employeeId, joiningDate, username, email, password, phoneNumber, company, department, designation, about, status } = req.body;
     const employee = await Employee.findById(req.params.id);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
     
-    // Update User if email or password changed
-    const user = await User.findById(employee.userId);
-    if (email && email !== user.email) user.email = email;
-    if (password) user.password = await bcrypt.hash(password, 10);
-    await user.save();
+    // Update User only if email is provided and changed
+    if (email && employee.userId) {
+      const user = await User.findById(employee.userId);
+      if (user && email !== user.email) {
+        user.email = email;
+        await user.save();
+      }
+    }
+    
+    // Parse date fields from DD-MM-YYYY format to Date objects
+    const parseDate = (dateString) => {
+      if (!dateString) return null;
+      const [day, month, year] = dateString.split('-');
+      const parsedDate = new Date(year, month - 1, day); // month is 0-indexed in Date constructor
+      
+      // Validate the date
+      if (isNaN(parsedDate.getTime())) {
+        return null;
+      }
+      return parsedDate;
+    };
+
+    let parsedJoiningDate = parseDate(joiningDate);
+    let parsedPassportExpiry = parseDate(req.body.passportExpiry);
+    let parsedBirthday = parseDate(req.body.birthday);
+    let parsedFamilyDateOfBirth = parseDate(req.body.familyInfo?.dateOfBirth);
+
+    // Validate dates if provided
+    if (joiningDate && !parsedJoiningDate) {
+      return res.status(400).json({ message: 'Invalid joining date format. Please use DD-MM-YYYY format.' });
+    }
+    if (req.body.passportExpiry && !parsedPassportExpiry) {
+      return res.status(400).json({ message: 'Invalid passport expiry date format. Please use DD-MM-YYYY format.' });
+    }
+    if (req.body.birthday && !parsedBirthday) {
+      return res.status(400).json({ message: 'Invalid birthday format. Please use DD-MM-YYYY format.' });
+    }
+    if (req.body.familyInfo?.dateOfBirth && !parsedFamilyDateOfBirth) {
+      return res.status(400).json({ message: 'Invalid family member date of birth format. Please use DD-MM-YYYY format.' });
+    }
     
     // Update Employee fields
     employee.firstName = firstName ?? employee.firstName;
     employee.lastName = lastName ?? employee.lastName;
     employee.employeeId = employeeId ?? employee.employeeId;
-    employee.joiningDate = joiningDate ?? employee.joiningDate;
+    employee.joiningDate = parsedJoiningDate ?? employee.joiningDate;
     employee.username = username ?? employee.username;
     employee.email = email ?? employee.email;
     employee.phoneNumber = phoneNumber ?? employee.phoneNumber;
@@ -139,6 +208,35 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
     employee.designation = designation ?? employee.designation;
     employee.about = about ?? employee.about;
     employee.status = status ?? employee.status;
+    // Update bank details
+    employee.bankName = req.body.bankName ?? employee.bankName;
+    employee.accountNo = req.body.accountNo ?? employee.accountNo;
+    employee.ifsc = req.body.ifsc ?? employee.ifsc;
+    employee.branch = req.body.branch ?? employee.branch;
+    // Update personal information
+    employee.passportNumber = req.body.passportNumber ?? employee.passportNumber;
+    employee.passportExpiry = parsedPassportExpiry ?? employee.passportExpiry;
+    employee.nationality = req.body.nationality ?? employee.nationality;
+    employee.religion = req.body.religion ?? employee.religion;
+    employee.maritalStatus = req.body.maritalStatus ?? employee.maritalStatus;
+    employee.spouseEmployment = req.body.spouseEmployment ?? employee.spouseEmployment;
+    employee.childrenCount = req.body.childrenCount ?? employee.childrenCount;
+    employee.gender = req.body.gender ?? employee.gender;
+    employee.birthday = parsedBirthday ?? employee.birthday;
+    employee.address = req.body.address ?? employee.address;
+    // Update emergency contacts
+    if (req.body.emergencyContacts) employee.emergencyContacts = req.body.emergencyContacts;
+    // Update family information
+    if (req.body.familyInfo) {
+      employee.familyInfo = {
+        ...req.body.familyInfo,
+        dateOfBirth: parsedFamilyDateOfBirth ?? employee.familyInfo?.dateOfBirth
+      };
+    }
+    // Update education details
+    if (req.body.education) employee.education = req.body.education;
+    // Update experience details
+    if (req.body.experience) employee.experience = req.body.experience;
     if (req.file) employee.profileImage = req.file.filename;
     await employee.save();
     res.json({ message: 'Employee and user updated', employee });
