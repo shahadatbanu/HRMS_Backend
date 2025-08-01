@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -19,6 +20,19 @@ router.post('/login', async (req, res) => {
       { expiresIn: '1d' }
     );
     res.json({ token, user: { email: user.email, role: user.role, id: user._id } });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET /api/auth/profile
+router.get('/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ user });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
