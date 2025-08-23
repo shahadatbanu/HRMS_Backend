@@ -1,8 +1,8 @@
-import express from 'express';
-import Candidate from '../models/Candidate.js';
-import Employee from '../models/Employee.js';
-import auth from '../middleware/auth.js';
-import role from '../middleware/role.js';
+const express = require('express');
+const Candidate = require('../models/Candidate.js');
+const Employee = require('../models/Employee.js');
+const auth = require('../middleware/auth.js');
+const role = require('../middleware/role.js');
 
 const router = express.Router();
 
@@ -306,4 +306,4 @@ router.get('/export', async (req, res) => {
   }
 });
 
-export default router; 
+module.exports = router; 

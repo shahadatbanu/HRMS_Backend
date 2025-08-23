@@ -1,22 +1,47 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import connectDB from './config/db.js';
-import authRoutes from './routes/auth.js';
-import employeesRoutes from './routes/employees.js';
-import candidatesRoutes from './routes/candidates.js';
-import reportsRoutes from './routes/reports.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const express = require('express');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const connectDB = require('./config/db.js');
+const authRoutes = require('./routes/auth.js');
+const employeesRoutes = require('./routes/employees.js');
+const candidatesRoutes = require('./routes/candidates.js');
+const reportsRoutes = require('./routes/reports.js');
+const attendanceRoutes = require('./routes/attendance.js');
+const attendanceSettingsRoutes = require('./routes/attendanceSettings.js');
+const cronService = require('./services/cronService.js');
+const path = require('path');
+const holidaysRoutes = require('./routes/holidays.js');
+const leavesRoutes = require('./routes/leaves.js');
+const terminationRoutes = require('./routes/termination.js');
+const resignationRoutes = require('./routes/resignation');
+const promotionsRoutes = require('./routes/promotions.js');
+const todosRoutes = require('./routes/todos.js');
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// Configure CORS to allow frontend access
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:3000',
+  'http://localhost:3001', 
+  'http://localhost:5173'
+];
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 // Connect to MongoDB
 connectDB();
+
+// Initialize cron service
+cronService.initialize();
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -27,8 +52,6 @@ app.get('/test', (req, res) => {
 });
 
 // Serve uploaded images
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Employee routes
@@ -39,6 +62,32 @@ app.use('/api/candidates', candidatesRoutes);
 
 // Reports routes
 app.use('/api/reports', reportsRoutes);
+
+// Attendance routes
+app.use('/api/attendance', attendanceRoutes);
+
+// Attendance settings routes
+app.use('/api/attendance-settings', attendanceSettingsRoutes);
+
+// Holidays routes
+app.use('/api/holidays', holidaysRoutes);
+// Designations routes
+const designationsRoutes = require('./routes/designations.js');
+app.use('/api/designations', designationsRoutes);
+// Leave routes
+app.use('/api/leaves', leavesRoutes);
+
+// Termination routes
+app.use('/api/termination', terminationRoutes);
+
+// Resignation routes
+app.use('/api/resignation', resignationRoutes);
+
+// Promotion routes
+app.use('/api/promotions', promotionsRoutes);
+
+// Todo routes
+app.use('/api/todos', todosRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 

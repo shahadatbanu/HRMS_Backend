@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const CandidateSchema = new mongoose.Schema({
   // Auto-incremental Candidate ID
@@ -91,18 +91,53 @@ const CandidateSchema = new mongoose.Schema({
   
   // Interview Details
   interviews: [{
-    scheduledDate: { type: Date },
+    scheduledDate: { type: Date, required: true },
     completedDate: { type: Date },
-    interviewer: { type: String },
+    interviewLevel: { type: String, enum: ['L1', 'L2', 'L3'], required: true },
+    interviewer: { type: String, required: true },
+    interviewLink: { type: String },
     notes: { type: String },
     feedback: { type: String },
     rating: { type: Number, min: 1, max: 5 },
-    status: { type: String, enum: ['Scheduled', 'Completed', 'Cancelled'] }
+    status: { type: String, enum: ['Scheduled', 'Completed', 'Cancelled'], default: 'Scheduled' },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    createdAt: { type: Date, default: Date.now }
   }],
   
   // Notes and Comments
   notes: [{
     content: { type: String, required: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  
+  // Background Check Notes
+  bgCheckNotes: [{
+    content: { type: String, required: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  
+  // Offer Details
+  offerDetails: [{
+    candidateName: { type: String },
+    jobTitle: { type: String },
+    jobLocation: { type: String },
+    payRate: { type: String },
+    vendorName: { type: String },
+    clientName: { type: String },
+    startDate: { type: Date },
+    status: { type: String, enum: ['draft', 'pending', 'accepted', 'rejected', 'expired'], default: 'draft' },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    createdAt: { type: Date, default: Date.now },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    updatedAt: { type: Date, default: Date.now }
+  }],
+  
+  // Submission Details
+  submissions: [{
+    submissionDate: { type: Date, required: true },
+    submissionNumber: { type: String, required: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
     createdAt: { type: Date, default: Date.now }
   }],
@@ -128,7 +163,33 @@ const CandidateSchema = new mongoose.Schema({
     changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
     changedAt: { type: Date, default: Date.now },
     notes: { type: String }
-  }]
+  }],
+  
+  // Soft delete fields
+  isDeleted: { type: Boolean, default: false },
+  deletedAt: { type: Date },
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  deletionReason: { type: String }
 }, { timestamps: true });
 
-export default mongoose.model('Candidate', CandidateSchema); 
+// Pre-save middleware to ensure offerDetails is always an array
+CandidateSchema.pre('save', function(next) {
+  // If offerDetails exists and is not an array, convert it to an array
+  if (this.offerDetails && !Array.isArray(this.offerDetails)) {
+    console.log('Converting offerDetails from object to array for document:', this._id);
+    this.offerDetails = [this.offerDetails];
+  }
+  next();
+});
+
+// Pre-validate middleware to ensure offerDetails is always an array
+CandidateSchema.pre('validate', function(next) {
+  // If offerDetails exists and is not an array, convert it to an array
+  if (this.offerDetails && !Array.isArray(this.offerDetails)) {
+    console.log('Converting offerDetails from object to array for document:', this._id);
+    this.offerDetails = [this.offerDetails];
+  }
+  next();
+});
+
+module.exports = mongoose.model('Candidate', CandidateSchema); 

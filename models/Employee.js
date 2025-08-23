@@ -1,12 +1,27 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const EmployeeSchema = new mongoose.Schema({
+  // Authentication fields (from User schema)
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { 
+    type: String, 
+    enum: ['admin', 'hr', 'employee'], 
+    default: 'employee' 
+  },
+  isActive: { type: Boolean, default: true },
+  lastLogin: { type: Date },
+  permissions: [{
+    module: { type: String }, // e.g., 'candidates', 'reports', 'settings'
+    actions: [{ type: String }] // e.g., ['create', 'read', 'update', 'delete']
+  }],
+  
+  // Personal Information (existing Employee fields)
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
   employeeId: { type: String, required: true, unique: true },
   joiningDate: { type: Date, required: true },
   username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
   phoneNumber: { type: String, required: true },
   company: { type: String, required: true },
   department: { type: String, required: true },
@@ -14,7 +29,7 @@ const EmployeeSchema = new mongoose.Schema({
   about: { type: String },
   profileImage: { type: String }, // store filename or URL
   status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  
   // Bank details fields
   bankName: { type: String },
   accountNo: { type: String },
@@ -59,6 +74,16 @@ const EmployeeSchema = new mongoose.Schema({
     startDate: { type: String },
     endDate: { type: String }
   }],
+
+  // Termination status
+  terminated: { type: Boolean, default: false },
+  resigned: { type: Boolean, default: false },
+  
+  // Soft delete fields
+  isDeleted: { type: Boolean, default: false },
+  deletedAt: { type: Date },
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  deletionReason: { type: String },
 }, { timestamps: true });
 
-export default mongoose.model('Employee', EmployeeSchema); 
+module.exports = mongoose.model('Employee', EmployeeSchema); 
