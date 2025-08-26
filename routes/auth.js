@@ -1,8 +1,8 @@
-import express from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
-import auth from '../middleware/auth.js';
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const Employee = require('../models/Employee.js');
+const auth = require('../middleware/auth.js');
 
 const router = express.Router();
 
@@ -10,16 +10,26 @@ const router = express.Router();
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: 'Invalid credentials' });
-    const isMatch = await bcrypt.compare(password, user.password);
+    const employee = await Employee.findOne({ email });
+    if (!employee) return res.status(400).json({ message: 'Invalid credentials' });
+    const isMatch = await bcrypt.compare(password, employee.password);
     if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
     const token = jwt.sign(
-      { userId: user._id, role: user.role },
+      { userId: employee._id, role: employee.role },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '1d' }
     );
-    res.json({ token, user: { email: user.email, role: user.role, id: user._id } });
+    res.json({ 
+      token, 
+      user: { 
+        _id: employee._id,
+        email: employee.email, 
+        role: employee.role,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        profileImage: employee.profileImage
+      } 
+    });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
@@ -28,14 +38,25 @@ router.post('/login', async (req, res) => {
 // GET /api/auth/profile
 router.get('/profile', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
-    if (!user) {
+    // Use the correct user ID field from the JWT token
+    const userId = req.user.userId || req.user.id || req.user._id;
+    const employee = await Employee.findById(userId).select('-password');
+    if (!employee) {
       return res.status(404).json({ message: 'User not found' });
     }
-    res.json({ user });
+    res.json({ 
+      user: {
+        _id: employee._id,
+        email: employee.email,
+        role: employee.role,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        profileImage: employee.profileImage
+      }
+    });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-export default router; 
+module.exports = router; 

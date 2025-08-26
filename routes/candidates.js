@@ -1,19 +1,16 @@
-import express from 'express';
-import multer from 'multer';
-import Candidate from '../models/Candidate.js';
-import Counter from '../models/Counter.js';
-import Employee from '../models/Employee.js';
-import auth from '../middleware/auth.js';
-import role from '../middleware/role.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const express = require('express');
+const multer = require('multer');
+const Candidate = require('../models/Candidate.js');
+const Counter = require('../models/Counter.js');
+const Employee = require('../models/Employee.js');
+const auth = require('../middleware/auth.js');
+const role = require('../middleware/role.js');
+const fs = require('fs');
+const path = require('path');
+const ExcelJS = require('exceljs');
+const ActivityService = require('../services/activityService.js');
 
 const router = express.Router();
-
-// ES module directory setup
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Function to generate next candidate ID
 async function getNextCandidateId() {
@@ -190,6 +187,9 @@ router.post('/', (req, res, next) => {
       profileImage: req.files?.profileImage ? req.files.profileImage[0].filename : undefined,
       assignedBy: req.user.id,
       recruiter: req.body.recruiter || undefined,
+      // If recruiter is provided, also set assignedTo to the same value
+      assignedTo: req.body.recruiter || undefined,
+      assignedDate: req.body.recruiter ? Date.now() : undefined,
       // Parse address object from JSON string
       address: req.body.address ? JSON.parse(req.body.address) : {},
       // Parse arrays from JSON strings
@@ -210,6 +210,17 @@ router.post('/', (req, res, next) => {
     await candidate.save();
 
     console.log('Candidate saved successfully:', candidate._id);
+
+    // Log activity
+    try {
+      await ActivityService.logCandidateAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging candidate creation activity:', activityError);
+    }
 
     res.status(201).json({
       success: true,
@@ -280,11 +291,37 @@ router.get('/', async (req, res) => {
 
     const filter = {};
 
+    // Role-based filtering
+    // If user is employee, only show candidates assigned to them
+    if (req.user && req.user.role === 'employee') {
+      console.log('🔍 Debug - req.user:', req.user);
+      
+      // Get the current employee directly (since we're now using Employee for auth)
+      const employeeId = req.user._id || req.user.id || req.user.userId;
+      console.log('🔍 Debug - employeeId:', employeeId);
+      
+      const employee = await Employee.findById(employeeId);
+      console.log('🔍 Debug - employee found:', employee ? 'Yes' : 'No');
+      
+      if (!employee) {
+        return res.status(400).json({
+          success: false,
+          message: 'Employee profile not found. Please contact administrator.'
+        });
+      }
+      
+      // Filter to show candidates assigned to this employee (only check assignedTo field)
+      filter.assignedTo = employee._id;
+      console.log('🔍 Debug - filter.assignedTo:', filter.assignedTo);
+    }
+
     // Status filter
     if (status) filter.status = status;
 
-    // Assignment filter
-    if (assignedTo) filter.assignedTo = assignedTo;
+    // Assignment filter (only for admin/hr roles)
+    if (assignedTo && (req.user.role === 'admin' || req.user.role === 'hr')) {
+      filter.assignedTo = assignedTo;
+    }
 
     // Experience filter
     if (experience) filter.yearsOfExperience = { $gte: parseInt(experience) };
@@ -311,7 +348,7 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const candidates = await Candidate.find(filter)
+    const candidates = await Candidate.find({ ...filter, isDeleted: { $ne: true } })
       .populate('assignedTo', 'firstName lastName email profileImage')
       .populate('assignedBy', 'firstName lastName email profileImage')
       .populate('recruiter', 'firstName lastName email profileImage designation')
@@ -319,7 +356,7 @@ router.get('/', async (req, res) => {
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
-    const total = await Candidate.countDocuments(filter);
+    const total = await Candidate.countDocuments({ ...filter, isDeleted: { $ne: true } });
 
     res.json({
       success: true,
@@ -341,12 +378,20 @@ router.get('/', async (req, res) => {
 // GET BY ID
 router.get('/:id', async (req, res) => {
   try {
-    const candidate = await Candidate.findById(req.params.id)
+    console.log('🔍 Individual candidate request - req.params.id:', req.params.id);
+    console.log('🔍 Individual candidate request - req.user:', req.user);
+    
+    const candidate = await Candidate.findOne({ _id: req.params.id, isDeleted: { $ne: true } })
       .populate('assignedTo', 'firstName lastName email profileImage')
       .populate('assignedBy', 'firstName lastName email profileImage')
       .populate('recruiter', 'firstName lastName email profileImage designation')
       .populate('notes.createdBy', 'firstName lastName profileImage email designation')
-      .populate('attachments.uploadedBy', 'firstName lastName profileImage email designation');
+      .populate('bgCheckNotes.createdBy', 'firstName lastName profileImage email designation')
+      .populate('attachments.uploadedBy', 'firstName lastName profileImage email designation')
+      .populate('submissions.createdBy', 'firstName lastName profileImage email designation')
+      .populate('interviews.createdBy', 'firstName lastName profileImage email designation')
+      .populate('offerDetails.createdBy', 'firstName lastName profileImage email designation')
+      .populate('offerDetails.updatedBy', 'firstName lastName profileImage email designation');
 
     if (!candidate) {
       return res.status(404).json({
@@ -355,9 +400,77 @@ router.get('/:id', async (req, res) => {
       });
     }
 
+    // Role-based access control
+    // If user is employee, check if they are assigned to this candidate
+    if (req.user && req.user.role === 'employee') {
+      console.log('🔍 Debug - req.user:', req.user);
+      
+      // Get the current employee directly (since we're now using Employee for auth)
+      const userEmployeeId = req.user._id || req.user.id || req.user.userId;
+      console.log('🔍 Debug - userEmployeeId:', userEmployeeId);
+      
+      const employee = await Employee.findById(userEmployeeId);
+      console.log('🔍 Debug - employee found:', employee ? 'Yes' : 'No');
+      
+      if (!employee) {
+        return res.status(400).json({
+          success: false,
+          message: 'Employee profile not found. Please contact administrator.'
+        });
+      }
+      
+      // Check if the candidate is assigned to this employee (only check assignedTo field)
+      console.log('🔍 Debug - candidate.assignedTo:', candidate.assignedTo);
+      console.log('🔍 Debug - employee._id:', employee._id);
+      
+      // More robust comparison - handle populated object
+      const candidateAssignedToId = candidate.assignedTo?._id || candidate.assignedTo;
+      const candidateAssignedTo = candidateAssignedToId?.toString();
+      const employeeIdString = employee._id.toString();
+      
+      console.log('🔍 Debug - candidateAssignedTo:', candidateAssignedTo);
+      console.log('🔍 Debug - employeeIdString:', employeeIdString);
+      
+      const isAssigned = candidateAssignedTo === employeeIdString;
+      
+      console.log('🔍 Debug - isAssigned:', isAssigned);
+      
+      if (!isAssigned) {
+        console.log('❌ Access denied - user is not assigned to this candidate');
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only view candidates assigned to you.'
+        });
+      }
+      
+      console.log('✅ Access granted - user is assigned to this candidate');
+    }
+
+    // Sort notes, bgCheckNotes, attachments, submissions, and interviews by createdAt/uploadedAt in descending order (newest first)
+    if (candidate.notes) {
+      candidate.notes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+    if (candidate.bgCheckNotes) {
+      candidate.bgCheckNotes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+    if (candidate.attachments) {
+      candidate.attachments.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    }
+    if (candidate.submissions) {
+      candidate.submissions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+    if (candidate.interviews) {
+      candidate.interviews.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    const candidateData = candidate.toObject();
+    console.log('🔍 GET candidate response - offerDetails type:', typeof candidateData.offerDetails);
+    console.log('🔍 GET candidate response - offerDetails isArray:', Array.isArray(candidateData.offerDetails));
+    console.log('🔍 GET candidate response - offerDetails:', candidateData.offerDetails);
+    
     res.json({
       success: true,
-      data: candidate
+      data: candidateData
     });
   } catch (error) {
     res.status(500).json({
@@ -390,6 +503,13 @@ router.put('/:id', (req, res, next) => {
       if (req.files.profileImage) {
         updateData.profileImage = req.files.profileImage[0].filename;
       }
+    }
+
+    // If recruiter is being updated, also set assignedTo to the same value
+    if (req.body.recruiter) {
+      updateData.assignedTo = req.body.recruiter;
+      updateData.assignedBy = req.user._id || req.user.id || req.user.userId;
+      updateData.assignedDate = Date.now();
     }
 
     // Parse JSON fields if they exist
@@ -442,6 +562,17 @@ router.put('/:id', (req, res, next) => {
       });
     }
 
+    // Log activity
+    try {
+      await ActivityService.logCandidateUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging candidate update activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -480,6 +611,7 @@ router.post('/:id/assign', (req, res, next) => {
       req.params.id,
       {
         assignedTo,
+        recruiter: assignedTo, // Also set recruiter to the same value
         assignedBy: req.user.id,
         assignedDate: Date.now(),
         $push: {
@@ -498,6 +630,18 @@ router.post('/:id/assign', (req, res, next) => {
         success: false,
         message: 'Candidate not found'
       });
+    }
+
+    // Log activity
+    try {
+      await ActivityService.logCandidateAssigned(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        `${employee.firstName} ${employee.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging candidate assignment activity:', activityError);
     }
 
     res.json({
@@ -526,30 +670,32 @@ router.put('/:id/status', async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for updating status. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
-    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    // Check if user is assigned to this candidate or is HR/Admin
     const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
-    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
     const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
     
-    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+    if (!isAssigned && !isHRorAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update this candidate'
       });
     }
 
+    // Store the old status before updating
+    const oldStatus = candidate.status;
+    
     candidate.status = status;
     candidate.statusHistory.push({
       status,
@@ -558,6 +704,19 @@ router.put('/:id/status', async (req, res) => {
     });
 
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logInterviewStageChanged(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        oldStatus,
+        status
+      );
+    } catch (activityError) {
+      console.error('Error logging status change activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -572,10 +731,27 @@ router.put('/:id/status', async (req, res) => {
   }
 });
 
-// ADD INTERVIEW - Employee adds interview details
+// ADD INTERVIEW
 router.post('/:id/interviews', async (req, res) => {
   try {
-    const { scheduledDate, interviewer, notes } = req.body;
+    const { scheduledDate, interviewLevel, interviewer, interviewLink, notes } = req.body;
+
+    if (!scheduledDate || !interviewLevel || !interviewer) {
+      return res.status(400).json({
+        success: false,
+        message: 'Scheduled date, interview level, and interviewer are required'
+      });
+    }
+
+    // Validate interview date is not in the past
+    const selectedDate = new Date(scheduledDate);
+    const now = new Date();
+    if (selectedDate < now) {
+      return res.status(400).json({
+        success: false,
+        message: 'Interview date cannot be in the past. Please select a future date.'
+      });
+    }
 
     const candidate = await Candidate.findById(req.params.id);
     if (!candidate) {
@@ -585,15 +761,15 @@ router.post('/:id/interviews', async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for adding interviews. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
@@ -605,23 +781,195 @@ router.post('/:id/interviews', async (req, res) => {
     if (!isAssigned && !isRecruiter && !isHRorAdmin) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to add interview for this candidate'
+        message: 'Not authorized to schedule interviews for this candidate'
       });
     }
 
+    // Add new interview
     candidate.interviews.push({
       scheduledDate: new Date(scheduledDate),
+      interviewLevel,
       interviewer,
+      interviewLink,
       notes,
-      status: 'Scheduled'
+      createdBy: employee._id
     });
 
     await candidate.save();
+
+    // Log activity
+    try {
+      const latestInterview = candidate.interviews[candidate.interviews.length - 1];
+      await ActivityService.logInterviewScheduled(
+        req.user.id,
+        latestInterview._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        scheduledDate
+      );
+    } catch (activityError) {
+      console.error('Error logging interview scheduling activity:', activityError);
+    }
 
     res.json({
       success: true,
       data: candidate,
       message: 'Interview scheduled successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// UPDATE INTERVIEW
+router.put('/:id/interviews/:interviewId', async (req, res) => {
+  try {
+    const { scheduledDate, interviewLevel, interviewer, interviewLink, notes, status } = req.body;
+
+    if (!scheduledDate || !interviewLevel || !interviewer) {
+      return res.status(400).json({
+        success: false,
+        message: 'Scheduled date, interview level, and interviewer are required'
+      });
+    }
+
+    // Validate interview date is not in the past
+    const selectedDate = new Date(scheduledDate);
+    const now = new Date();
+    if (selectedDate < now) {
+      return res.status(400).json({
+        success: false,
+        message: 'Interview date cannot be in the past. Please select a future date.'
+      });
+    }
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update interviews for this candidate'
+      });
+    }
+
+    // Find the interview
+    const interview = candidate.interviews.id(req.params.interviewId);
+    if (!interview) {
+      return res.status(404).json({
+        success: false,
+        message: 'Interview not found'
+      });
+    }
+
+    // Update interview
+    interview.scheduledDate = new Date(scheduledDate);
+    interview.interviewLevel = interviewLevel;
+    interview.interviewer = interviewer;
+    interview.interviewLink = interviewLink;
+    interview.notes = notes;
+    if (status) {
+      interview.status = status;
+    }
+
+    await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logInterviewUpdated(
+        req.user.id,
+        interview._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        interviewLevel
+      );
+    } catch (activityError) {
+      console.error('Error logging interview update activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Interview updated successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// DELETE INTERVIEW
+router.delete('/:id/interviews/:interviewId', async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Find the interview
+    const interview = candidate.interviews.id(req.params.interviewId);
+    if (!interview) {
+      return res.status(404).json({
+        success: false,
+        message: 'Interview not found'
+      });
+    }
+
+    // Check if user is the interview creator or admin/HR
+    if (employee && interview.createdBy.toString() !== employee._id.toString() && 
+        !['hr', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this interview'
+      });
+    }
+
+    interview.deleteOne();
+    await candidate.save();
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Interview deleted successfully'
     });
   } catch (error) {
     res.status(400).json({
@@ -644,15 +992,15 @@ router.post('/:id/notes', async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for adding notes. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
@@ -674,6 +1022,18 @@ router.post('/:id/notes', async (req, res) => {
     });
 
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logNotesAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        'candidate'
+      );
+    } catch (activityError) {
+      console.error('Error logging notes activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -709,15 +1069,15 @@ router.put('/:id/notes/:noteId', async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for editing notes. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
@@ -732,6 +1092,18 @@ router.put('/:id/notes/:noteId', async (req, res) => {
 
     note.content = content;
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logNotesUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        'candidate'
+      );
+    } catch (activityError) {
+      console.error('Error logging notes update activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -765,15 +1137,15 @@ router.delete('/:id/notes/:noteId', async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for deleting notes. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
@@ -802,7 +1174,7 @@ router.delete('/:id/notes/:noteId', async (req, res) => {
   }
 });
 
-// DELETE - Admin/HR can delete candidate
+// SOFT DELETE - Admin/HR can soft delete candidate
 router.delete('/:id', (req, res, next) => {
   // Allow both admin and hr roles
   if (req.user && (req.user.role === 'hr' || req.user.role === 'admin')) {
@@ -821,40 +1193,95 @@ router.delete('/:id', (req, res, next) => {
       });
     }
 
-    // Delete uploaded files if they exist
-    if (candidate.cvFile) {
-      const cvFilePath = path.join(__dirname, '..', 'uploads', 'candidates', candidate.cvFile);
-      if (fs.existsSync(cvFilePath)) {
-        fs.unlinkSync(cvFilePath);
-      }
-    }
-
-    if (candidate.profileImage) {
-      const profileImagePath = path.join(__dirname, '..', 'uploads', 'candidates', candidate.profileImage);
-      if (fs.existsSync(profileImagePath)) {
-        fs.unlinkSync(profileImagePath);
-      }
-    }
-
-    // Delete attachments if they exist
-    if (candidate.attachments && candidate.attachments.length > 0) {
-      for (const attachment of candidate.attachments) {
-        const attachmentPath = path.join(__dirname, '..', 'uploads', 'candidates', attachment.fileName);
-        if (fs.existsSync(attachmentPath)) {
-          fs.unlinkSync(attachmentPath);
-        }
-      }
-    }
-
-    // Delete the candidate from database
-    await Candidate.findByIdAndDelete(req.params.id);
+    // Soft delete - mark as deleted instead of removing from database
+    candidate.isDeleted = true;
+    candidate.deletedAt = new Date();
+    candidate.deletedBy = req.user?.id; // If available from auth middleware
+    candidate.deletionReason = req.body.reason || 'Deleted by administrator';
+    
+    await candidate.save();
 
     res.json({
       success: true,
-      message: 'Candidate deleted successfully'
+      message: 'Candidate soft deleted successfully'
     });
   } catch (error) {
     res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// RESTORE soft deleted candidate (Admin/HR only)
+router.patch('/:id/restore', (req, res, next) => {
+  // Allow both admin and hr roles
+  if (req.user && (req.user.role === 'hr' || req.user.role === 'admin')) {
+    next();
+  } else {
+    return res.status(403).json({ message: 'Access denied. Only HR and Admin can restore candidates.' });
+  }
+}, async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id);
+    
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+    
+    if (!candidate.isDeleted) {
+      return res.status(400).json({
+        success: false,
+        message: 'Candidate is not deleted'
+      });
+    }
+    
+    // Restore the candidate
+    candidate.isDeleted = false;
+    candidate.deletedAt = undefined;
+    candidate.deletedBy = undefined;
+    candidate.deletionReason = undefined;
+    
+    await candidate.save();
+    
+    res.json({
+      success: true,
+      message: 'Candidate restored successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET soft deleted candidates (Admin/HR only)
+router.get('/deleted', (req, res, next) => {
+  // Allow both admin and hr roles
+  if (req.user && (req.user.role === 'hr' || req.user.role === 'admin')) {
+    next();
+  } else {
+    return res.status(403).json({ message: 'Access denied. Only HR and Admin can view deleted candidates.' });
+  }
+}, async (req, res) => {
+  try {
+    const deletedCandidates = await Candidate.find({ isDeleted: true })
+      .populate('assignedTo', 'firstName lastName email')
+      .populate('assignedBy', 'firstName lastName email')
+      .populate('recruiter', 'firstName lastName email')
+      .populate('deletedBy', 'firstName lastName email')
+      .sort({ deletedAt: -1 });
+    
+    res.json({
+      success: true,
+      data: deletedCandidates
+    });
+  } catch (error) {
+    res.status(500).json({
       success: false,
       message: error.message
     });
@@ -971,15 +1398,15 @@ router.post('/:id/attachments', upload.single('file'), async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for uploading attachments. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
@@ -1015,6 +1442,19 @@ router.post('/:id/attachments', upload.single('file'), async (req, res) => {
     candidate.attachments.push(attachment);
     await candidate.save();
 
+    // Log activity
+    try {
+      await ActivityService.logAttachmentAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        'candidate',
+        req.file.originalname
+      );
+    } catch (activityError) {
+      console.error('Error logging attachment activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -1047,15 +1487,15 @@ router.delete('/:id/attachments/:attachmentId', async (req, res) => {
       });
     }
 
-    // Find the Employee record associated with the current user
-    const userId = req.user.id || req.user.userId;
-    let employee = await Employee.findOne({ userId: userId });
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
     
     // If no employee profile found, return error
     if (!employee) {
       return res.status(400).json({
         success: false,
-        message: 'Employee profile required for deleting attachments. Please contact administrator to create your employee profile.'
+        message: 'Employee profile not found. Please contact administrator.'
       });
     }
 
@@ -1152,4 +1592,1046 @@ router.get('/:id/attachments/:attachmentId/download', async (req, res) => {
   }
 });
 
-export default router; 
+// ==================== BG CHECK NOTES ENDPOINTS ====================
+
+// ADD BG CHECK NOTE - Any authorized user can add BG check notes
+router.post('/:id/bg-check-notes', async (req, res) => {
+  try {
+    const { content } = req.body;
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to add BG check notes for this candidate'
+      });
+    }
+
+    candidate.bgCheckNotes.push({
+      content,
+      createdBy: employee._id
+    });
+
+    await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logBgCheckNoteAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging BG check note activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'BG check note added successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// UPDATE BG CHECK NOTE - Only the note creator or admin/HR can edit
+router.put('/:id/bg-check-notes/:noteId', async (req, res) => {
+  try {
+    const { content } = req.body;
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    const note = candidate.bgCheckNotes.id(req.params.noteId);
+    if (!note) {
+      return res.status(404).json({
+        success: false,
+        message: 'BG check note not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is the note creator or admin/HR
+    if (employee && note.createdBy.toString() !== employee._id.toString() && 
+        !['hr', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to edit this BG check note'
+      });
+    }
+
+    note.content = content;
+    await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logBgCheckNoteUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging BG check note update activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'BG check note updated successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// DELETE BG CHECK NOTE - Only the note creator or admin/HR can delete
+router.delete('/:id/bg-check-notes/:noteId', async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    const note = candidate.bgCheckNotes.id(req.params.noteId);
+    if (!note) {
+      return res.status(404).json({
+        success: false,
+        message: 'BG check note not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is the note creator or admin/HR
+    if (employee && note.createdBy.toString() !== employee._id.toString() && 
+        !['hr', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this BG check note'
+      });
+    }
+
+    note.deleteOne();
+    await candidate.save();
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'BG check note deleted successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// ==================== OFFER DETAILS ENDPOINTS ====================
+
+// SAVE/UPDATE OFFER DETAILS
+router.post('/:id/offer-details', async (req, res) => {
+  try {
+    const { candidateName, jobTitle, jobLocation, payRate, vendorName, clientName, startDate, status } = req.body;
+    console.log('POST offer-details - Received data:', req.body); // Debug log
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to save offer details for this candidate'
+      });
+    }
+
+    // Add new offer details to the array
+    const newOfferDetail = {
+      candidateName,
+      jobTitle,
+      jobLocation,
+      payRate,
+      vendorName,
+      clientName,
+      startDate: startDate ? new Date(startDate) : null,
+      status: status || 'draft',
+      createdBy: employee._id,
+      createdAt: new Date(),
+      updatedBy: employee._id,
+      updatedAt: new Date()
+    };
+
+    // Initialize offerDetails array if it doesn't exist
+    if (!candidate.offerDetails) {
+      candidate.offerDetails = [];
+    }
+
+    candidate.offerDetails.push(newOfferDetail);
+
+    console.log('POST offer-details - Saving offerDetails:', candidate.offerDetails); // Debug log
+    console.log('POST offer-details - offerDetails type before save:', typeof candidate.offerDetails);
+    console.log('POST offer-details - offerDetails isArray before save:', Array.isArray(candidate.offerDetails));
+    
+    try {
+      await candidate.save();
+      console.log('POST offer-details - Save successful');
+    } catch (saveError) {
+      console.error('POST offer-details - Save error:', saveError);
+      throw saveError;
+    }
+    
+    console.log('POST offer-details - After save, candidate.offerDetails:', candidate.offerDetails); // Debug log
+
+    // Log activity
+    try {
+      await ActivityService.logOfferDetailsAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging offer details creation activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Offer details saved successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// UPDATE OFFER DETAILS
+router.put('/:id/offer-details', async (req, res) => {
+  try {
+    const { candidateName, jobTitle, jobLocation, payRate, vendorName, clientName, startDate, status } = req.body;
+    console.log('PUT offer-details - Received data:', req.body); // Debug log
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update offer details for this candidate'
+      });
+    }
+
+    // Check if offer details exist
+    if (!candidate.offerDetails || candidate.offerDetails.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No offer details found to update'
+      });
+    }
+
+    // For now, update the first offer detail (we'll need to modify this to handle specific IDs)
+    // TODO: Add offerDetailId parameter to update specific offer detail
+    candidate.offerDetails[0] = {
+      ...candidate.offerDetails[0], // Keep existing fields like _id, createdBy, createdAt
+      candidateName,
+      jobTitle,
+      jobLocation,
+      payRate,
+      vendorName,
+      clientName,
+      startDate: startDate ? new Date(startDate) : null,
+      status: status || candidate.offerDetails[0].status || 'draft',
+      updatedBy: employee._id,
+      updatedAt: new Date()
+    };
+
+    console.log('PUT offer-details - Saving offerDetails:', candidate.offerDetails); // Debug log
+    await candidate.save();
+    console.log('PUT offer-details - After save, candidate.offerDetails:', candidate.offerDetails); // Debug log
+
+    // Log activity
+    try {
+      await ActivityService.logOfferDetailsUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging offer details update activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Offer details updated successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// DELETE OFFER DETAILS
+router.delete('/:id/offer-details', async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete offer details for this candidate'
+      });
+    }
+
+    // Check if offer details exist
+    if (!candidate.offerDetails || candidate.offerDetails.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No offer details found to delete'
+      });
+    }
+
+    // Remove all offer details (or we can add specific ID deletion later)
+    candidate.offerDetails = [];
+    await candidate.save();
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Offer details deleted successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// ==================== SUBMISSION ENDPOINTS ====================
+
+// ADD SUBMISSION
+router.post('/:id/submissions', async (req, res) => {
+  try {
+    const { submissionDate, submissionNumber } = req.body;
+
+    // Validate submission date is not in the future
+    const selectedDate = new Date(submissionDate);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
+    
+    if (selectedDate > today) {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission date cannot be in the future. Please select today\'s date or a past date.'
+      });
+    }
+
+    // Validate submission number is not negative
+    const submissionNumberInt = parseInt(submissionNumber);
+    if (submissionNumberInt < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission number cannot be negative. Please enter a positive number.'
+      });
+    }
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to add submissions for this candidate'
+      });
+    }
+
+    // Add new submission
+    candidate.submissions.push({
+      submissionDate: new Date(submissionDate),
+      submissionNumber,
+      createdBy: employee._id
+    });
+
+    await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logSubmissionAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        submissionNumber
+      );
+    } catch (activityError) {
+      console.error('Error logging submission creation activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Submission added successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// UPDATE SUBMISSION
+router.put('/:id/submissions/:submissionId', async (req, res) => {
+  try {
+    const { submissionDate, submissionNumber } = req.body;
+
+    // Validate submission date is not in the future
+    const selectedDate = new Date(submissionDate);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
+    
+    if (selectedDate > today) {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission date cannot be in the future. Please select today\'s date or a past date.'
+      });
+    }
+
+    // Validate submission number is not negative
+    const submissionNumberInt = parseInt(submissionNumber);
+    if (submissionNumberInt < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Submission number cannot be negative. Please enter a positive number.'
+      });
+    }
+
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update submissions for this candidate'
+      });
+    }
+
+    // Find the submission
+    const submission = candidate.submissions.id(req.params.submissionId);
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        message: 'Submission not found'
+      });
+    }
+
+    // Update submission
+    submission.submissionDate = new Date(submissionDate);
+    submission.submissionNumber = submissionNumber;
+
+    await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logSubmissionUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        submissionNumber
+      );
+    } catch (activityError) {
+      console.error('Error logging submission update activity:', activityError);
+    }
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Submission updated successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// DELETE SUBMISSION
+router.delete('/:id/submissions/:submissionId', async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id);
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Find the submission
+    const submission = candidate.submissions.id(req.params.submissionId);
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        message: 'Submission not found'
+      });
+    }
+
+    // Check if user is the submission creator or admin/HR
+    if (employee && submission.createdBy.toString() !== employee._id.toString() && 
+        !['hr', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this submission'
+      });
+    }
+
+    submission.deleteOne();
+    await candidate.save();
+
+    res.json({
+      success: true,
+      data: candidate,
+      message: 'Submission deleted successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET SUBMISSIONS DATA FOR DASHBOARD CHART
+router.get('/submissions/dashboard', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    
+    // Build filter based on employee selection
+    const filter = { isDeleted: { $ne: true } };
+    
+    // If specific employee is selected, filter by assignedTo
+    if (employeeId && employeeId !== 'all') {
+      filter.assignedTo = employeeId;
+    }
+    
+    // Get all candidates with their submissions
+    const candidates = await Candidate.find(filter)
+      .populate('assignedTo', 'firstName lastName designation')
+      .select('firstName lastName assignedTo submissions');
+    
+    // Initialize monthly data structure
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+    const monthlySubmissions = new Array(12).fill(0);
+    
+    // Process submissions for each candidate
+    candidates.forEach(candidate => {
+      if (candidate.submissions && Array.isArray(candidate.submissions)) {
+        candidate.submissions.forEach(submission => {
+          const submissionDate = new Date(submission.submissionDate);
+          
+          // Only count submissions from current year
+          if (submissionDate.getFullYear() === currentYear) {
+            const month = submissionDate.getMonth(); // 0-11
+            const submissionNumber = parseInt(submission.submissionNumber) || 0;
+            monthlySubmissions[month] += submissionNumber;
+          }
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        months: months,
+        submissions: monthlySubmissions,
+        totalSubmissions: monthlySubmissions.reduce((sum, count) => sum + count, 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching submissions data for dashboard:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// EXPORT SUBMISSIONS TO EXCEL
+router.post('/:id/submissions/export', async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id)
+      .populate('submissions.createdBy', 'firstName lastName')
+      .populate('recruiter', 'firstName lastName')
+      .populate('assignedTo', 'firstName lastName');
+    
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    // Get the current employee directly (since we're now using Employee for auth)
+    const employeeId = req.user._id || req.user.id || req.user.userId;
+    let employee = await Employee.findById(employeeId);
+    
+    // If no employee profile found, return error
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee profile not found. Please contact administrator.'
+      });
+    }
+
+    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
+    
+    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to export submissions for this candidate'
+      });
+    }
+
+    const { filter, dateRange } = req.body;
+    
+    console.log('Export request - Filter:', filter, 'DateRange:', dateRange);
+    
+    // Filter submissions based on the provided filter
+    let filteredSubmissions = candidate.submissions;
+    
+    if (filter && filter !== 'all') {
+      const now = new Date();
+      const startDate = new Date();
+      const endDate = new Date();
+      
+      switch (filter) {
+        case 'last-week':
+          startDate.setDate(now.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'this-month':
+          startDate.setDate(1);
+          startDate.setHours(0, 0, 0, 0);
+          endDate.setMonth(now.getMonth() + 1);
+          endDate.setDate(0);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        case 'last-month':
+          startDate.setMonth(now.getMonth() - 1);
+          startDate.setDate(1);
+          startDate.setHours(0, 0, 0, 0);
+          endDate.setDate(0);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        case 'last-6-months':
+          startDate.setMonth(now.getMonth() - 6);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'date-range':
+          if (dateRange && dateRange.startDate && dateRange.endDate) {
+            startDate.setTime(new Date(dateRange.startDate).getTime());
+            startDate.setHours(0, 0, 0, 0);
+            endDate.setTime(new Date(dateRange.endDate).getTime());
+            endDate.setHours(23, 59, 59, 999);
+          }
+          break;
+        default:
+          startDate.setDate(1);
+          startDate.setHours(0, 0, 0, 0);
+      }
+      
+      filteredSubmissions = candidate.submissions.filter(submission => {
+        const submissionDate = new Date(submission.submissionDate);
+        return submissionDate >= startDate && submissionDate <= endDate;
+      });
+    }
+
+    // Sort submissions by date (newest first)
+    filteredSubmissions.sort((a, b) => new Date(b.submissionDate) - new Date(a.submissionDate));
+
+    // Create Excel workbook
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Submissions');
+
+    // Generate filter description for header
+    let filterDescription = '';
+    const now = new Date();
+    
+    switch (filter) {
+      case 'last-week':
+        const lastWeekStart = new Date(now);
+        lastWeekStart.setDate(now.getDate() - 7);
+        filterDescription = `Last Week (${lastWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`;
+        break;
+      case 'this-month':
+        filterDescription = `${now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+        break;
+      case 'last-month':
+        const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        filterDescription = `${lastMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+        break;
+      case 'last-6-months':
+        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        filterDescription = `Last 6 Months (${sixMonthsAgo.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} - ${now.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })})`;
+        break;
+      case 'date-range':
+        if (dateRange && dateRange.startDate && dateRange.endDate) {
+          const startDate = new Date(dateRange.startDate);
+          const endDate = new Date(dateRange.endDate);
+          filterDescription = `Custom Range (${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })})`;
+        } else {
+          filterDescription = 'All Time';
+        }
+        break;
+      default:
+        filterDescription = `${now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+    }
+    
+    console.log('Generated filter description:', filterDescription);
+
+    // Add headers first
+    worksheet.columns = [
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Submission Number', key: 'number', width: 20 },
+      { header: 'Added By', key: 'addedBy', width: 25 },
+      { header: 'Created At', key: 'createdAt', width: 20 }
+    ];
+
+    // Set title and filter information directly in cells
+    worksheet.getCell('A1').value = `Submissions Report - ${filterDescription}`;
+    worksheet.getCell('A2').value = ''; // Empty row for spacing
+
+    // Style the title row
+    worksheet.getRow(1).font = { bold: true, size: 11 };
+    worksheet.getRow(1).alignment = { horizontal: 'center' };
+    
+    // Style the header row (now row 3)
+    worksheet.getRow(3).font = { bold: true, size: 10 };
+    worksheet.getRow(3).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' }
+    };
+
+    // Add data rows (starting from row 4)
+    filteredSubmissions.forEach((submission, index) => {
+      const rowNumber = index + 4; // Start from row 4 (after title and empty row)
+      worksheet.getCell(`A${rowNumber}`).value = new Date(submission.submissionDate).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+      worksheet.getCell(`B${rowNumber}`).value = submission.submissionNumber;
+      worksheet.getCell(`C${rowNumber}`).value = submission.createdBy ? 
+        `${submission.createdBy.firstName} ${submission.createdBy.lastName}` : 
+        'Unknown User';
+      worksheet.getCell(`D${rowNumber}`).value = new Date(submission.createdAt).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    });
+
+    // Add summary information
+    const summaryStartRow = filteredSubmissions.length + 5; // 1 title row + 1 empty row + 1 header row + data rows + 1 empty row
+    worksheet.getCell(`A${summaryStartRow}`).value = 'Summary Information';
+    worksheet.getCell(`A${summaryStartRow + 1}`).value = 'Total Submissions';
+    worksheet.getCell(`B${summaryStartRow + 1}`).value = filteredSubmissions.length;
+    worksheet.getCell(`A${summaryStartRow + 2}`).value = 'Total Submission Numbers';
+    worksheet.getCell(`B${summaryStartRow + 2}`).value = filteredSubmissions.reduce((sum, s) => sum + parseInt(s.submissionNumber), 0);
+    worksheet.getCell(`A${summaryStartRow + 3}`).value = 'Candidate Name';
+    worksheet.getCell(`B${summaryStartRow + 3}`).value = `${candidate.firstName} ${candidate.lastName}`;
+    worksheet.getCell(`A${summaryStartRow + 4}`).value = 'Export Date';
+    worksheet.getCell(`B${summaryStartRow + 4}`).value = new Date().toLocaleDateString('en-US');
+
+    // Style summary rows
+    worksheet.getRow(summaryStartRow).font = { bold: true, size: 10 }; // Summary Information title
+    worksheet.getRow(summaryStartRow + 1).font = { bold: true, size: 10 };
+    worksheet.getRow(summaryStartRow + 2).font = { bold: true, size: 10 };
+    worksheet.getRow(summaryStartRow + 3).font = { bold: true, size: 10 };
+    worksheet.getRow(summaryStartRow + 4).font = { bold: true, size: 10 };
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="submissions_${candidate.firstName}_${candidate.lastName}_${new Date().toISOString().split('T')[0]}.xlsx"`);
+
+    // Write to response
+    await workbook.xlsx.write(res);
+    res.end();
+
+  } catch (error) {
+    console.error('Export error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to export submissions'
+    });
+  }
+});
+
+// GET upcoming interviews for dashboard
+router.get('/interviews/dashboard', async (req, res) => {
+  try {
+    const today = new Date();
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    // Get candidates with scheduled interviews in the next 7 days
+    const sevenDaysFromNow = new Date(todayDate);
+    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+    
+    const candidates = await Candidate.find({
+      isDeleted: { $ne: true },
+      'interviews.scheduledDate': { 
+        $gte: todayDate,
+        $lte: sevenDaysFromNow 
+      },
+      'interviews.status': 'Scheduled'
+    })
+    .populate('assignedTo', 'firstName lastName profileImage')
+    .populate('recruiter', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage')
+    .sort({ 'interviews.scheduledDate': 1 });
+    
+    // Extract and format upcoming interviews
+    const upcomingInterviews = [];
+    
+    candidates.forEach(candidate => {
+      candidate.interviews.forEach(interview => {
+        const interviewDate = new Date(interview.scheduledDate);
+        const interviewDateOnly = new Date(interviewDate.getFullYear(), interviewDate.getMonth(), interviewDate.getDate());
+        
+        // Only include scheduled interviews in the next 7 days
+        if (interview.status === 'Scheduled' && 
+            interviewDateOnly >= todayDate && 
+            interviewDateOnly <= sevenDaysFromNow) {
+          
+          upcomingInterviews.push({
+            _id: interview._id,
+            candidateId: candidate._id,
+            candidateName: `${candidate.firstName} ${candidate.lastName}`,
+            candidateProfileImage: candidate.profileImage,
+            appliedRole: candidate.appliedRole || 'Not specified',
+            scheduledDate: interview.scheduledDate,
+            interviewLevel: interview.interviewLevel,
+            interviewer: interview.interviewer,
+            interviewLink: interview.interviewLink,
+            notes: interview.notes,
+            assignedTo: candidate.assignedTo,
+            recruiter: candidate.recruiter
+          });
+        }
+      });
+    });
+    
+    // Sort by scheduled date
+    upcomingInterviews.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+    
+    // Limit to 5 upcoming interviews for dashboard
+    const dashboardInterviews = upcomingInterviews.slice(0, 5);
+    
+    res.json({
+      success: true,
+      data: dashboardInterviews,
+      total: upcomingInterviews.length
+    });
+  } catch (err) {
+    console.error('Error fetching dashboard interviews:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: err.message 
+    });
+  }
+});
+
+module.exports = router; 

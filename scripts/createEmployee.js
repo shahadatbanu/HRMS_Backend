@@ -1,7 +1,7 @@
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
-import dotenv from 'dotenv';
-import User from '../models/User.js';
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const dotenv = require('dotenv');
+const Employee = require('../models/Employee.js');
 
 dotenv.config();
 
@@ -15,14 +15,14 @@ const createEmployee = async () => {
   const password = 'qwER1234!';
   const role = 'employee';
 
-  const existing = await User.findOne({ email });
+  const existing = await Employee.findOne({ email });
   if (existing) {
     console.log('Employee user already exists.');
     process.exit(0);
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-  const user = new User({ email, password: hashedPassword, role });
+  const user = new Employee({ email, password: hashedPassword, role });
   await user.save();
   console.log('Employee user created successfully.');
   process.exit(0);
