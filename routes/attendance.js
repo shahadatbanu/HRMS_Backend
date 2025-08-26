@@ -3,6 +3,7 @@ const Attendance = require('../models/Attendance.js');
 const Employee = require('../models/Employee.js');
 const auth = require('../middleware/auth.js');
 const role = require('../middleware/role.js');
+const ActivityService = require('../services/activityService.js');
 
 const router = express.Router();
 
@@ -376,6 +377,18 @@ router.post('/checkin', auth, async (req, res) => {
       geolocation: attendance.checkIn.geolocation
     });
     
+    // Log activity
+    try {
+      await ActivityService.logAttendanceMarked(
+        req.user.id,
+        attendance._id,
+        `${employee.firstName} ${employee.lastName}`,
+        status
+      );
+    } catch (activityError) {
+      console.error('Error logging attendance activity:', activityError);
+    }
+    
     const populatedAttendance = await Attendance.findById(attendance._id)
       .populate('employeeId', 'firstName lastName email department designation employeeId profileImage');
     
@@ -478,6 +491,18 @@ router.post('/checkout', auth, async (req, res) => {
     attendance.productionHours = Math.max(0, productionHours);
     
     await attendance.save();
+    
+    // Log activity
+    try {
+      await ActivityService.logAttendanceMarked(
+        req.user.id,
+        attendance._id,
+        `${attendance.employeeId.firstName} ${attendance.employeeId.lastName}`,
+        'checkout'
+      );
+    } catch (activityError) {
+      console.error('Error logging check-out activity:', activityError);
+    }
     
     const populatedAttendance = await Attendance.findById(attendance._id)
       .populate('employeeId', 'firstName lastName email department designation employeeId profileImage');

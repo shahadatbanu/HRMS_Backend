@@ -1,11 +1,40 @@
 const express = require('express');
 const Todo = require('../models/Todo.js');
 const auth = require('../middleware/auth.js');
+const ActivityService = require('../services/activityService.js');
 
 const router = express.Router();
 
 // Protect all todo routes
 router.use(auth);
+
+// Helper function to auto-delete old todos (keep only 10 most recent)
+const autoDeleteOldTodos = async (userId) => {
+  try {
+    const totalTodos = await Todo.countDocuments({ 
+      createdBy: userId,
+      isDeleted: { $ne: true }
+    });
+    
+    if (totalTodos > 10) {
+      const todosToDelete = await Todo.find({ 
+        createdBy: userId,
+        isDeleted: { $ne: true }
+      })
+      .sort({ createdAt: 1 }) // Oldest first
+      .limit(totalTodos - 10);
+      
+      for (const todo of todosToDelete) {
+        todo.isDeleted = true;
+        await todo.save();
+      }
+      
+      console.log(`Auto-deleted ${todosToDelete.length} old todos for user ${userId}`);
+    }
+  } catch (error) {
+    console.error('Error in auto-delete old todos:', error);
+  }
+};
 
 // GET all todos for the authenticated user
 router.get('/', async (req, res) => {
@@ -45,6 +74,42 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching todos:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET todos for dashboard (with pagination and auto-deletion)
+router.get('/dashboard', async (req, res) => {
+  try {
+    const { page = 1 } = req.query;
+    const limit = 5; // 5 todos per page
+    const skip = (parseInt(page) - 1) * limit;
+    
+    const filter = { 
+      createdBy: req.user.id,
+      isDeleted: { $ne: true }
+    };
+    
+    // Auto-delete old todos first
+    await autoDeleteOldTodos(req.user.id);
+    
+    const todos = await Todo.find(filter)
+      .populate('assignedTo', 'firstName lastName')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await Todo.countDocuments(filter);
+    
+    res.json({
+      data: todos,
+      total,
+      page: parseInt(page),
+      limit,
+      totalPages: Math.ceil(total / limit)
+    });
+  } catch (err) {
+    console.error('Error fetching dashboard todos:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -89,6 +154,20 @@ router.post('/', async (req, res) => {
     });
     
     await todo.save();
+    
+    // Auto-delete old todos after creating a new one
+    await autoDeleteOldTodos(req.user.id);
+    
+    // Log activity
+    try {
+      await ActivityService.logTodoCreated(
+        req.user.id,
+        todo._id,
+        todo.title
+      );
+    } catch (activityError) {
+      console.error('Error logging todo creation activity:', activityError);
+    }
     
     // Populate assignedTo field for response
     await todo.populate('assignedTo', 'firstName lastName');
@@ -172,8 +251,22 @@ router.patch('/:id/toggle', async (req, res) => {
       return res.status(404).json({ message: 'Todo not found' });
     }
     
+    const wasCompleted = todo.completed;
     todo.completed = !todo.completed;
     await todo.save();
+    
+    // Log activity only when completing a todo
+    if (!wasCompleted && todo.completed) {
+      try {
+        await ActivityService.logTodoCompleted(
+          req.user.id,
+          todo._id,
+          todo.title
+        );
+      } catch (activityError) {
+        console.error('Error logging todo completion activity:', activityError);
+      }
+    }
     
     // Populate assignedTo field for response
     await todo.populate('assignedTo', 'firstName lastName');

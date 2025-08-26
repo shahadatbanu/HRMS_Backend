@@ -16,6 +16,7 @@ const terminationRoutes = require('./routes/termination.js');
 const resignationRoutes = require('./routes/resignation');
 const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
+const activitiesRoutes = require('./routes/activities.js');
 
 dotenv.config();
 
@@ -31,7 +32,7 @@ const allowedOrigins = [
 app.use(cors({
   origin: allowedOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -88,6 +89,9 @@ app.use('/api/promotions', promotionsRoutes);
 
 // Todo routes
 app.use('/api/todos', todosRoutes);
+
+// Activities routes
+app.use('/api/activities', activitiesRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 

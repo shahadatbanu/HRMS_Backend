@@ -6,6 +6,7 @@ const Attendance = require('../models/Attendance');
 const mongoose = require('mongoose');
 const auth = require('../middleware/auth');
 const role = require('../middleware/role');
+const ActivityService = require('../services/activityService.js');
 // const auth = require('../middleware/auth'); // Uncomment if you want to protect routes
 
 // Function to create attendance records for approved leave
@@ -172,6 +173,21 @@ router.post('/', async (req, res) => {
   try {
     const leave = new Leave(req.body);
     await leave.save();
+    
+    // Log activity
+    try {
+      const employee = await Employee.findById(leave.employeeId);
+      if (employee) {
+        await ActivityService.logLeaveRequested(
+          req.user?.id || leave.createdBy,
+          leave._id,
+          `${employee.firstName} ${employee.lastName}`
+        );
+      }
+    } catch (activityError) {
+      console.error('Error logging leave request activity:', activityError);
+    }
+    
     res.status(201).json({ success: true, data: leave });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -266,6 +282,25 @@ router.put('/:id', async (req, res) => {
       { new: true }
     ).populate('employeeId', 'firstName lastName profileImage department designation')
      .populate('approvedBy', 'firstName lastName profileImage');
+
+    // Log activity for approval/rejection
+    try {
+      if (status === 'Approved') {
+        await ActivityService.logLeaveApproved(
+          req.user?.id || req.body.approvedBy,
+          updatedLeave._id,
+          `${updatedLeave.employeeId.firstName} ${updatedLeave.employeeId.lastName}`
+        );
+      } else if (status === 'Declined') {
+        await ActivityService.logLeaveRejected(
+          req.user?.id || req.body.approvedBy,
+          updatedLeave._id,
+          `${updatedLeave.employeeId.firstName} ${updatedLeave.employeeId.lastName}`
+        );
+      }
+    } catch (activityError) {
+      console.error('Error logging leave status change activity:', activityError);
+    }
 
     res.json({ success: true, data: updatedLeave });
   } catch (err) {

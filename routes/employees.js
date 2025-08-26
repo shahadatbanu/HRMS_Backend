@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const Employee = require('../models/Employee.js');
 const auth = require('../middleware/auth.js'); // Protect routes
+const ActivityService = require('../services/activityService.js');
 
 const router = express.Router();
 
@@ -107,6 +108,18 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
       } : undefined
     });
     await employee.save();
+    
+    // Log activity
+    try {
+      await ActivityService.logEmployeeAdded(
+        req.user.id,
+        employee._id,
+        `${employee.firstName} ${employee.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging employee creation activity:', activityError);
+    }
+    
     res.status(201).json({ message: 'Employee created successfully', employee });
   } catch (err) {
     console.error('Error creating employee:', err);
@@ -135,6 +148,19 @@ router.get('/', async (req, res) => {
     if (req.query.activeOnly === 'true') {
       filter.terminated = false;
     }
+    
+    // Add date filtering for new hires
+    if (req.query.startDate && req.query.endDate) {
+      const startDate = new Date(req.query.startDate);
+      const endDate = new Date(req.query.endDate);
+      endDate.setHours(23, 59, 59, 999); // Set to end of day
+      
+      filter.joiningDate = {
+        $gte: startDate,
+        $lte: endDate
+      };
+    }
+    
     const employees = await Employee.find(filter).select('-password').sort({ createdAt: -1 });
     res.json(employees);
   } catch (err) {
@@ -262,6 +288,18 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
     if (req.body.experience) employee.experience = req.body.experience;
     if (req.file) employee.profileImage = req.file.filename;
     await employee.save();
+    
+    // Log activity
+    try {
+      await ActivityService.logEmployeeUpdated(
+        req.user.id,
+        employee._id,
+        `${employee.firstName} ${employee.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging employee update activity:', activityError);
+    }
+    
     res.json({ message: 'Employee updated successfully', employee });
   } catch (err) {
     console.error('Error updating employee:', err);
@@ -401,6 +439,171 @@ router.get('/stats/dashboard', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// GET upcoming birthdays for dashboard
+router.get('/birthdays/dashboard', async (req, res) => {
+  try {
+    const today = new Date();
+    const currentMonth = today.getMonth();
+    const currentDay = today.getDate();
+    
+    // Get employees with birthdays in the next 30 days (excluding soft deleted)
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+    
+    const employees = await Employee.find({
+      isDeleted: { $ne: true },
+      birthday: { $exists: true, $ne: null }
+    })
+    .select('firstName lastName designation profileImage birthday')
+    .sort({ birthday: 1 });
+    
+    // Group employees by birthday category
+    const birthdays = {
+      today: [],
+      tomorrow: [],
+      upcoming: []
+    };
+    
+    employees.forEach(employee => {
+      if (!employee.birthday) return;
+      
+      const birthday = new Date(employee.birthday);
+      
+      // Get local date components (without time)
+      const birthdayMonth = birthday.getMonth();
+      const birthdayDay = birthday.getDate();
+      
+      // Create today's date without time component
+      const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      
+      // Set this year's birthday without time component
+      const thisYearBirthday = new Date(today.getFullYear(), birthdayMonth, birthdayDay);
+      
+      // If this year's birthday has passed, check next year's birthday
+      let nextBirthday = thisYearBirthday;
+      if (thisYearBirthday < todayDate) {
+        nextBirthday = new Date(today.getFullYear() + 1, birthdayMonth, birthdayDay);
+      }
+      
+      // Calculate days until birthday using date-only comparison
+      const daysUntilBirthday = Math.ceil((nextBirthday - todayDate) / (1000 * 60 * 60 * 24));
+      
+      // Only include birthdays in the next 30 days
+      if (daysUntilBirthday <= 30) {
+        const employeeData = {
+          _id: employee._id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          fullName: `${employee.firstName} ${employee.lastName}`,
+          designation: employee.designation,
+          profileImage: employee.profileImage,
+          birthday: nextBirthday,
+          daysUntil: daysUntilBirthday
+        };
+        
+        if (daysUntilBirthday === 0) {
+          birthdays.today.push(employeeData);
+        } else if (daysUntilBirthday === 1) {
+          birthdays.tomorrow.push(employeeData);
+        } else {
+          birthdays.upcoming.push(employeeData);
+        }
+      }
+    });
+    
+    // Sort upcoming birthdays by date
+    birthdays.upcoming.sort((a, b) => a.daysUntil - b.daysUntil);
+    
+    res.json({
+      success: true,
+      data: birthdays
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: err.message 
+    });
+  }
+});
+
+// GET yearly birthdays for full year view
+router.get('/birthdays/yearly', async (req, res) => {
+  try {
+    const { year } = req.query;
+    const selectedYear = parseInt(year) || new Date().getFullYear();
+    const today = new Date();
+    
+    const employees = await Employee.find({
+      isDeleted: { $ne: true },
+      birthday: { $exists: true, $ne: null }
+    })
+    .select('firstName lastName designation profileImage birthday')
+    .sort({ birthday: 1 });
+    
+    const monthlyBirthdays = {};
+    
+    // Initialize all months
+    for (let i = 1; i <= 12; i++) {
+      monthlyBirthdays[i.toString().padStart(2, '0')] = [];
+    }
+    
+    employees.forEach(employee => {
+      if (!employee.birthday) return;
+      
+      const birthday = new Date(employee.birthday);
+      const birthdayMonth = birthday.getMonth();
+      const birthdayDay = birthday.getDate();
+      
+      // Create birthday for the selected year
+      const yearBirthday = new Date(selectedYear, birthdayMonth, birthdayDay);
+      
+      // Calculate days until birthday (considering if it's this year or next year)
+      let daysUntil = Math.ceil((yearBirthday - today) / (1000 * 60 * 60 * 24));
+      
+      // If the birthday has passed this year, calculate for next year
+      if (daysUntil < 0 && selectedYear === today.getFullYear()) {
+        const nextYearBirthday = new Date(selectedYear + 1, birthdayMonth, birthdayDay);
+        daysUntil = Math.ceil((nextYearBirthday - today) / (1000 * 60 * 60 * 24));
+      }
+      
+      const employeeData = {
+        _id: employee._id,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        fullName: `${employee.firstName} ${employee.lastName}`,
+        designation: employee.designation,
+        profileImage: employee.profileImage,
+        birthday: yearBirthday,
+        daysUntil: daysUntil
+      };
+      
+      const monthKey = (birthdayMonth + 1).toString().padStart(2, '0');
+      monthlyBirthdays[monthKey].push(employeeData);
+    });
+    
+    // Sort employees within each month by day
+    Object.keys(monthlyBirthdays).forEach(monthKey => {
+      monthlyBirthdays[monthKey].sort((a, b) => {
+        const dayA = new Date(a.birthday).getDate();
+        const dayB = new Date(b.birthday).getDate();
+        return dayA - dayB;
+      });
+    });
+    
+    res.json({
+      success: true,
+      data: monthlyBirthdays
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: err.message 
+    });
   }
 });
 

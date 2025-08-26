@@ -8,6 +8,7 @@ const role = require('../middleware/role.js');
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const ActivityService = require('../services/activityService.js');
 
 const router = express.Router();
 
@@ -209,6 +210,17 @@ router.post('/', (req, res, next) => {
     await candidate.save();
 
     console.log('Candidate saved successfully:', candidate._id);
+
+    // Log activity
+    try {
+      await ActivityService.logCandidateAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging candidate creation activity:', activityError);
+    }
 
     res.status(201).json({
       success: true,
@@ -550,6 +562,17 @@ router.put('/:id', (req, res, next) => {
       });
     }
 
+    // Log activity
+    try {
+      await ActivityService.logCandidateUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging candidate update activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -609,6 +632,18 @@ router.post('/:id/assign', (req, res, next) => {
       });
     }
 
+    // Log activity
+    try {
+      await ActivityService.logCandidateAssigned(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        `${employee.firstName} ${employee.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging candidate assignment activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -658,6 +693,9 @@ router.put('/:id/status', async (req, res) => {
       });
     }
 
+    // Store the old status before updating
+    const oldStatus = candidate.status;
+    
     candidate.status = status;
     candidate.statusHistory.push({
       status,
@@ -666,6 +704,19 @@ router.put('/:id/status', async (req, res) => {
     });
 
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logInterviewStageChanged(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        oldStatus,
+        status
+      );
+    } catch (activityError) {
+      console.error('Error logging status change activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -745,6 +796,19 @@ router.post('/:id/interviews', async (req, res) => {
     });
 
     await candidate.save();
+
+    // Log activity
+    try {
+      const latestInterview = candidate.interviews[candidate.interviews.length - 1];
+      await ActivityService.logInterviewScheduled(
+        req.user.id,
+        latestInterview._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        scheduledDate
+      );
+    } catch (activityError) {
+      console.error('Error logging interview scheduling activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -832,6 +896,18 @@ router.put('/:id/interviews/:interviewId', async (req, res) => {
     }
 
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logInterviewUpdated(
+        req.user.id,
+        interview._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        interviewLevel
+      );
+    } catch (activityError) {
+      console.error('Error logging interview update activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -947,6 +1023,18 @@ router.post('/:id/notes', async (req, res) => {
 
     await candidate.save();
 
+    // Log activity
+    try {
+      await ActivityService.logNotesAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        'candidate'
+      );
+    } catch (activityError) {
+      console.error('Error logging notes activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -1004,6 +1092,18 @@ router.put('/:id/notes/:noteId', async (req, res) => {
 
     note.content = content;
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logNotesUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        'candidate'
+      );
+    } catch (activityError) {
+      console.error('Error logging notes update activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -1342,6 +1442,19 @@ router.post('/:id/attachments', upload.single('file'), async (req, res) => {
     candidate.attachments.push(attachment);
     await candidate.save();
 
+    // Log activity
+    try {
+      await ActivityService.logAttachmentAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        'candidate',
+        req.file.originalname
+      );
+    } catch (activityError) {
+      console.error('Error logging attachment activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -1525,6 +1638,17 @@ router.post('/:id/bg-check-notes', async (req, res) => {
 
     await candidate.save();
 
+    // Log activity
+    try {
+      await ActivityService.logBgCheckNoteAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging BG check note activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -1582,6 +1706,17 @@ router.put('/:id/bg-check-notes/:noteId', async (req, res) => {
 
     note.content = content;
     await candidate.save();
+
+    // Log activity
+    try {
+      await ActivityService.logBgCheckNoteUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging BG check note update activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -1729,6 +1864,17 @@ router.post('/:id/offer-details', async (req, res) => {
     
     console.log('POST offer-details - After save, candidate.offerDetails:', candidate.offerDetails); // Debug log
 
+    // Log activity
+    try {
+      await ActivityService.logOfferDetailsAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging offer details creation activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -1807,6 +1953,17 @@ router.put('/:id/offer-details', async (req, res) => {
     console.log('PUT offer-details - Saving offerDetails:', candidate.offerDetails); // Debug log
     await candidate.save();
     console.log('PUT offer-details - After save, candidate.offerDetails:', candidate.offerDetails); // Debug log
+
+    // Log activity
+    try {
+      await ActivityService.logOfferDetailsUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`
+      );
+    } catch (activityError) {
+      console.error('Error logging offer details update activity:', activityError);
+    }
 
     res.json({
       success: true,
@@ -1950,6 +2107,18 @@ router.post('/:id/submissions', async (req, res) => {
 
     await candidate.save();
 
+    // Log activity
+    try {
+      await ActivityService.logSubmissionAdded(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        submissionNumber
+      );
+    } catch (activityError) {
+      console.error('Error logging submission creation activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -2035,6 +2204,18 @@ router.put('/:id/submissions/:submissionId', async (req, res) => {
 
     await candidate.save();
 
+    // Log activity
+    try {
+      await ActivityService.logSubmissionUpdated(
+        req.user.id,
+        candidate._id,
+        `${candidate.firstName} ${candidate.lastName}`,
+        submissionNumber
+      );
+    } catch (activityError) {
+      console.error('Error logging submission update activity:', activityError);
+    }
+
     res.json({
       success: true,
       data: candidate,
@@ -2099,6 +2280,62 @@ router.delete('/:id/submissions/:submissionId', async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET SUBMISSIONS DATA FOR DASHBOARD CHART
+router.get('/submissions/dashboard', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    
+    // Build filter based on employee selection
+    const filter = { isDeleted: { $ne: true } };
+    
+    // If specific employee is selected, filter by assignedTo
+    if (employeeId && employeeId !== 'all') {
+      filter.assignedTo = employeeId;
+    }
+    
+    // Get all candidates with their submissions
+    const candidates = await Candidate.find(filter)
+      .populate('assignedTo', 'firstName lastName designation')
+      .select('firstName lastName assignedTo submissions');
+    
+    // Initialize monthly data structure
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+    const monthlySubmissions = new Array(12).fill(0);
+    
+    // Process submissions for each candidate
+    candidates.forEach(candidate => {
+      if (candidate.submissions && Array.isArray(candidate.submissions)) {
+        candidate.submissions.forEach(submission => {
+          const submissionDate = new Date(submission.submissionDate);
+          
+          // Only count submissions from current year
+          if (submissionDate.getFullYear() === currentYear) {
+            const month = submissionDate.getMonth(); // 0-11
+            const submissionNumber = parseInt(submission.submissionNumber) || 0;
+            monthlySubmissions[month] += submissionNumber;
+          }
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        months: months,
+        submissions: monthlySubmissions,
+        totalSubmissions: monthlySubmissions.reduce((sum, count) => sum + count, 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching submissions data for dashboard:', error);
+    res.status(500).json({
       success: false,
       message: error.message
     });
@@ -2318,6 +2555,81 @@ router.post('/:id/submissions/export', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to export submissions'
+    });
+  }
+});
+
+// GET upcoming interviews for dashboard
+router.get('/interviews/dashboard', async (req, res) => {
+  try {
+    const today = new Date();
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    // Get candidates with scheduled interviews in the next 7 days
+    const sevenDaysFromNow = new Date(todayDate);
+    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+    
+    const candidates = await Candidate.find({
+      isDeleted: { $ne: true },
+      'interviews.scheduledDate': { 
+        $gte: todayDate,
+        $lte: sevenDaysFromNow 
+      },
+      'interviews.status': 'Scheduled'
+    })
+    .populate('assignedTo', 'firstName lastName profileImage')
+    .populate('recruiter', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage')
+    .sort({ 'interviews.scheduledDate': 1 });
+    
+    // Extract and format upcoming interviews
+    const upcomingInterviews = [];
+    
+    candidates.forEach(candidate => {
+      candidate.interviews.forEach(interview => {
+        const interviewDate = new Date(interview.scheduledDate);
+        const interviewDateOnly = new Date(interviewDate.getFullYear(), interviewDate.getMonth(), interviewDate.getDate());
+        
+        // Only include scheduled interviews in the next 7 days
+        if (interview.status === 'Scheduled' && 
+            interviewDateOnly >= todayDate && 
+            interviewDateOnly <= sevenDaysFromNow) {
+          
+          upcomingInterviews.push({
+            _id: interview._id,
+            candidateId: candidate._id,
+            candidateName: `${candidate.firstName} ${candidate.lastName}`,
+            candidateProfileImage: candidate.profileImage,
+            appliedRole: candidate.appliedRole || 'Not specified',
+            scheduledDate: interview.scheduledDate,
+            interviewLevel: interview.interviewLevel,
+            interviewer: interview.interviewer,
+            interviewLink: interview.interviewLink,
+            notes: interview.notes,
+            assignedTo: candidate.assignedTo,
+            recruiter: candidate.recruiter
+          });
+        }
+      });
+    });
+    
+    // Sort by scheduled date
+    upcomingInterviews.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+    
+    // Limit to 5 upcoming interviews for dashboard
+    const dashboardInterviews = upcomingInterviews.slice(0, 5);
+    
+    res.json({
+      success: true,
+      data: dashboardInterviews,
+      total: upcomingInterviews.length
+    });
+  } catch (err) {
+    console.error('Error fetching dashboard interviews:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: err.message 
     });
   }
 });

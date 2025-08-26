@@ -134,7 +134,7 @@ router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
     // Count by status
     const stats = {
       totalEmployees,
-      present: 0,
+      onTime: 0,  // Renamed from 'present' to 'onTime'
       absent: 0,
       late: 0,
       halfDay: 0,
@@ -145,7 +145,7 @@ router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
     attendanceRecords.forEach(record => {
       switch (record.status) {
         case 'Present':
-          stats.present++;
+          stats.onTime++;  // Count as 'onTime' (on time)
           break;
         case 'Absent':
           stats.absent++;
@@ -162,7 +162,10 @@ router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
     });
     
     // Calculate not marked (employees without attendance records)
-    stats.notMarked = totalEmployees - (stats.present + stats.absent + stats.late + stats.halfDay);
+    stats.notMarked = totalEmployees - (stats.onTime + stats.absent + stats.late + stats.halfDay);
+    
+    // Calculate total present (on time + late) for dashboard display
+    stats.present = stats.onTime + stats.late;
     
     res.json({
       success: true,
