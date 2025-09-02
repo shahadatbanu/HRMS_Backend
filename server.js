@@ -17,6 +17,7 @@ const resignationRoutes = require('./routes/resignation');
 const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
+const serverless = require("serverless-http");
 
 dotenv.config();
 
@@ -97,4 +98,6 @@ app.use("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+// app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+module.exports = app;
+module.exports.handler = serverless(app);
