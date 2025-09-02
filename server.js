@@ -92,6 +92,9 @@ app.use('/api/todos', todosRoutes);
 
 // Activities routes
 app.use('/api/activities', activitiesRoutes);
+app.use("/", (req, res) => {
+  res.send("API is running....");
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
