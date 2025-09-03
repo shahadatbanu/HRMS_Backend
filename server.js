@@ -31,19 +31,19 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    console.log("🔍 Incoming Origin:", origin);
+    if (!origin || allowedOrigins.some(url => origin && origin.startsWith(url))) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS: ' + origin));
+      console.error("❌ CORS blocked:", origin);
+      callback(new Error("Not allowed by CORS: " + origin));
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
-
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // preflight
 
 app.use(express.json());
 
