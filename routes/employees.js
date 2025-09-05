@@ -127,6 +127,35 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
   }
 });
 
+// Get current user profile
+router.get('/me', async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.user._id).select('-password');
+    if (!employee) return res.status(404).json({ message: 'Employee not found' });
+    res.json(employee);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Asset image upload endpoint
+router.post('/upload/asset-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+    
+    const imageUrl = req.file.filename;
+    res.json({ 
+      message: 'Asset image uploaded successfully',
+      imageUrl: imageUrl
+    });
+  } catch (error) {
+    console.error('Asset image upload error:', error);
+    res.status(500).json({ message: 'Failed to upload asset image' });
+  }
+});
+
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
@@ -286,6 +315,17 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
     if (req.body.education) employee.education = req.body.education;
     // Update experience details
     if (req.body.experience) employee.experience = req.body.experience;
+    // Update assets (admin/hr only)
+    if (req.body.assets && (req.user?.role === 'admin' || req.user?.role === 'hr')) {
+      employee.assets = req.body.assets.map(a => ({
+        itemName: a.itemName,
+        assetCode: a.assetCode,
+        image: a.image,
+        assignedBy: a.assignedBy,
+        assignedOn: a.assignedOn ? new Date(a.assignedOn) : undefined,
+        note: a.note,
+      }));
+    }
     if (req.file) employee.profileImage = req.file.filename;
     await employee.save();
     
@@ -599,6 +639,113 @@ router.get('/birthdays/yearly', async (req, res) => {
       data: monthlyBirthdays
     });
   } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: err.message 
+    });
+  }
+});
+
+// GET employee statistics by designation
+router.get('/stats/designations', async (req, res) => {
+  try {
+    const { period } = req.query; // 'week', 'month', 'year', or 'all'
+    
+    let dateFilter = {};
+    
+    // Apply date filtering based on period
+    if (period === 'week') {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      dateFilter = { joiningDate: { $gte: weekAgo } };
+    } else if (period === 'month') {
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      dateFilter = { joiningDate: { $gte: monthAgo } };
+    } else if (period === 'year') {
+      const yearAgo = new Date();
+      yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+      dateFilter = { joiningDate: { $gte: yearAgo } };
+    }
+    // For 'all' or no period specified, no date filter is applied
+    
+    // Get official designations first
+    const Designation = require('../models/Designation.js');
+    const officialDesignations = await Designation.find({ status: 'Active' }).sort({ name: 1 });
+    const officialDesignationNames = officialDesignations.map(d => d.name);
+    
+    // Get employee count by designation (only for official designations)
+    const designationStats = await Employee.aggregate([
+      {
+        $match: {
+          isDeleted: { $ne: true },
+          designation: { $in: officialDesignationNames },
+          ...dateFilter
+        }
+      },
+      {
+        $group: {
+          _id: '$designation',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+    
+    // Get total employees for percentage calculation (only official designations)
+    const totalEmployees = await Employee.countDocuments({
+      isDeleted: { $ne: true },
+      designation: { $in: officialDesignationNames },
+      ...dateFilter
+    });
+    
+    // Calculate percentage change from previous month (monthly basis)
+    let previousMonthTotal = 0;
+    
+    // Calculate current month and previous month date ranges
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+    
+    // Get total employees from previous month
+    previousMonthTotal = await Employee.countDocuments({
+      isDeleted: { $ne: true },
+      designation: { $in: officialDesignationNames },
+      joiningDate: { 
+        $gte: previousMonthStart,
+        $lte: previousMonthEnd
+      }
+    });
+    
+    // Calculate percentage change from previous month
+    const percentageChange = previousMonthTotal > 0 
+      ? ((totalEmployees - previousMonthTotal) / previousMonthTotal) * 100 
+      : 0;
+    
+    // Include all official designations (even those with 0 employees)
+    const allDesignationStats = officialDesignationNames.map(designationName => {
+      const existingStat = designationStats.find(stat => stat._id === designationName);
+      return {
+        _id: designationName,
+        count: existingStat ? existingStat.count : 0
+      };
+    }).sort((a, b) => b.count - a.count); // Sort by count descending
+
+    res.json({
+      success: true,
+      data: {
+        designations: allDesignationStats,
+        total: totalEmployees,
+        percentageChange: Math.round(percentageChange * 10) / 10, // Round to 1 decimal place
+        period: period || 'all'
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching designation stats:', err);
     res.status(500).json({ 
       success: false, 
       message: 'Server error', 

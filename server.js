@@ -17,7 +17,11 @@ const resignationRoutes = require('./routes/resignation');
 const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
+<<<<<<< HEAD
 const serverless = require("serverless-http");
+=======
+const performanceSettingsRoutes = require('./routes/performanceSettings.js');
+>>>>>>> upstream/dev
 
 dotenv.config();
 
@@ -107,7 +111,12 @@ app.use("/", (req, res) => {
   res.send("API is running....");
 });
 
-const PORT = process.env.PORT || 5000;app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+// const PORT = process.env.PORT || 5000;app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
 //module.exports = app;
 //module.exports.handler = serverless(app);
 
+// Performance settings routes
+app.use('/api/performance-settings', performanceSettingsRoutes);
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
