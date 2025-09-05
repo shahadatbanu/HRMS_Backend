@@ -17,11 +17,8 @@ const resignationRoutes = require('./routes/resignation');
 const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
-<<<<<<< HEAD
-const serverless = require("serverless-http");
-=======
 const performanceSettingsRoutes = require('./routes/performanceSettings.js');
->>>>>>> upstream/dev
+
 
 dotenv.config();
 
