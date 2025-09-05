@@ -17,6 +17,7 @@ const resignationRoutes = require('./routes/resignation');
 const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
+const performanceSettingsRoutes = require('./routes/performanceSettings.js');
 
 dotenv.config();
 
@@ -92,6 +93,9 @@ app.use('/api/todos', todosRoutes);
 
 // Activities routes
 app.use('/api/activities', activitiesRoutes);
+
+// Performance settings routes
+app.use('/api/performance-settings', performanceSettingsRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
