@@ -9,6 +9,7 @@ const designations = [
   { name: 'IT Recruiter', status: 'Active' },
   { name: 'Team Lead', status: 'Active' },
   { name: 'Manager', status: 'Active' },
+  { name: 'HR', status: 'Active' },
 ];
 
 async function seed() {
