@@ -26,13 +26,15 @@ const app = express();
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3000',
   'http://localhost:3001',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'https://hrms-sha.vercel.app','http://localhost:5000'
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
     console.log("🔍 Incoming Origin:", origin);
-    if (!origin || allowedOrigins.some(url => origin && origin.startsWith(url))) {
+    
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.error("❌ CORS blocked:", origin);
@@ -105,7 +107,7 @@ app.use("/", (req, res) => {
   res.send("API is running....");
 });
 
-const PORT = process.env.PORT || 5000;
-// app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
-module.exports = app;
-module.exports.handler = serverless(app);
+const PORT = process.env.PORT || 5000;app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+//module.exports = app;
+//module.exports.handler = serverless(app);
+
