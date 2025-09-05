@@ -2342,6 +2342,116 @@ router.get('/submissions/dashboard', async (req, res) => {
   }
 });
 
+// GET JOB OFFERS DATA FOR DASHBOARD CHART
+router.get('/job-offers/dashboard', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    
+    // Build filter based on employee selection
+    const filter = { isDeleted: { $ne: true } };
+    
+    // If specific employee is selected, filter by assignedTo
+    if (employeeId && employeeId !== 'all') {
+      filter.assignedTo = employeeId;
+    }
+    
+    // Get all candidates with their offer details
+    const candidates = await Candidate.find(filter)
+      .populate('assignedTo', 'firstName lastName designation')
+      .select('firstName lastName assignedTo offerDetails');
+    
+    // Initialize monthly data structure
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+    const monthlyJobOffers = new Array(12).fill(0);
+    
+    // Process offer details for each candidate
+    candidates.forEach(candidate => {
+      if (candidate.offerDetails && Array.isArray(candidate.offerDetails)) {
+        candidate.offerDetails.forEach(offer => {
+          const offerDate = new Date(offer.createdAt);
+          
+          // Only count offers from current year
+          if (offerDate.getFullYear() === currentYear) {
+            const month = offerDate.getMonth(); // 0-11
+            monthlyJobOffers[month] += 1;
+          }
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        months: months,
+        jobOffers: monthlyJobOffers,
+        totalJobOffers: monthlyJobOffers.reduce((sum, count) => sum + count, 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching job offers data for dashboard:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET INTERVIEW SCHEDULES DATA FOR DASHBOARD CHART
+router.get('/interview-schedules/dashboard', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    
+    // Build filter based on employee selection
+    const filter = { isDeleted: { $ne: true } };
+    
+    // If specific employee is selected, filter by assignedTo
+    if (employeeId && employeeId !== 'all') {
+      filter.assignedTo = employeeId;
+    }
+    
+    // Get all candidates with their interviews
+    const candidates = await Candidate.find(filter)
+      .populate('assignedTo', 'firstName lastName designation')
+      .select('firstName lastName assignedTo interviews');
+    
+    // Initialize monthly data structure
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+    const monthlyInterviewSchedules = new Array(12).fill(0);
+    
+    // Process interviews for each candidate
+    candidates.forEach(candidate => {
+      if (candidate.interviews && Array.isArray(candidate.interviews)) {
+        candidate.interviews.forEach(interview => {
+          const interviewDate = new Date(interview.scheduledDate);
+          
+          // Only count interviews from current year
+          if (interviewDate.getFullYear() === currentYear) {
+            const month = interviewDate.getMonth(); // 0-11
+            monthlyInterviewSchedules[month] += 1;
+          }
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        months: months,
+        interviewSchedules: monthlyInterviewSchedules,
+        totalInterviewSchedules: monthlyInterviewSchedules.reduce((sum, count) => sum + count, 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching interview schedules data for dashboard:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 // EXPORT SUBMISSIONS TO EXCEL
 router.post('/:id/submissions/export', async (req, res) => {
   try {
