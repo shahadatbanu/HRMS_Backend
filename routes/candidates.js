@@ -2493,8 +2493,12 @@ router.get('/dashboard/candidates-per-recruiter', async (req, res) => {
       if (dateTo) dateFilter.createdAt.$lte = new Date(dateTo);
     }
 
-    // Base filter excluding soft deleted candidates
-    const baseFilter = { isDeleted: { $ne: true }, ...dateFilter };
+    // Base filter excluding soft deleted and hired candidates
+    const baseFilter = { 
+      isDeleted: { $ne: true }, 
+      status: { $ne: 'Hired' }, // Exclude hired candidates
+      ...dateFilter 
+    };
 
     // Get candidates per recruiter with aggregation
     const candidatesPerRecruiter = await Candidate.aggregate([
@@ -2558,20 +2562,108 @@ router.get('/dashboard/candidates-per-recruiter', async (req, res) => {
 // GET CANDIDATE ACTIVITY LEADERBOARD
 router.get('/dashboard/activity-leaderboard', async (req, res) => {
   try {
-    const baseFilter = { isDeleted: { $ne: true } };
+    const { filter = 'monthly', page = 1, limit = 7 } = req.query;
+    
+    // Build date filter for activity calculation based on the selected period
+    const now = new Date();
+    let activityDateFilter = {};
+    
+    switch (filter) {
+      case 'all':
+        // No date filter - calculate activity based on all-time data
+        break;
+      case 'weekly':
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: weekAgo };
+        break;
+      case 'monthly':
+        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: monthAgo };
+        break;
+      case '3months':
+        const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: threeMonthsAgo };
+        break;
+      case '6months':
+        const sixMonthsAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: sixMonthsAgo };
+        break;
+      default:
+        const defaultMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: defaultMonthAgo };
+    }
+    
+    const baseFilter = { 
+      isDeleted: { $ne: true },
+      status: { $ne: 'Hired' } // Exclude hired candidates
+    };
     
     const candidateActivity = await Candidate.aggregate([
       { $match: baseFilter },
       {
         $addFields: {
-          submissionsCount: { $size: { $ifNull: ['$submissions', []] } },
-          interviewsCount: { $size: { $ifNull: ['$interviews', []] } },
-          offersCount: { $size: { $ifNull: ['$offerDetails', []] } },
+          submissionsCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$submissions', []] },
+                cond: Object.keys(activityDateFilter).length > 0 ? 
+                  { $gte: ['$$this.submissionDate', activityDateFilter.$gte] } : 
+                  true
+              }
+            }
+          },
+          interviewsCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$interviews', []] },
+                cond: Object.keys(activityDateFilter).length > 0 ? 
+                  { $gte: ['$$this.scheduledDate', activityDateFilter.$gte] } : 
+                  true
+              }
+            }
+          },
+          offersCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$offerDetails', []] },
+                cond: Object.keys(activityDateFilter).length > 0 ? 
+                  { $gte: ['$$this.createdAt', activityDateFilter.$gte] } : 
+                  true
+              }
+            }
+          },
           activityScore: {
             $add: [
-              { $size: { $ifNull: ['$submissions', []] } },
-              { $size: { $ifNull: ['$interviews', []] } },
-              { $size: { $ifNull: ['$offerDetails', []] } }
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$submissions', []] },
+                    cond: Object.keys(activityDateFilter).length > 0 ? 
+                      { $gte: ['$$this.submissionDate', activityDateFilter.$gte] } : 
+                      true
+                  }
+                }
+              },
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$interviews', []] },
+                    cond: Object.keys(activityDateFilter).length > 0 ? 
+                      { $gte: ['$$this.scheduledDate', activityDateFilter.$gte] } : 
+                      true
+                  }
+                }
+              },
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$offerDetails', []] },
+                    cond: Object.keys(activityDateFilter).length > 0 ? 
+                      { $gte: ['$$this.createdAt', activityDateFilter.$gte] } : 
+                      true
+                  }
+                }
+              }
             ]
           }
         }
@@ -2581,6 +2673,7 @@ router.get('/dashboard/activity-leaderboard', async (req, res) => {
           _id: 1,
           firstName: 1,
           lastName: 1,
+          profileImage: 1,
           submissionsCount: 1,
           interviewsCount: 1,
           offersCount: 1,
@@ -2588,53 +2681,533 @@ router.get('/dashboard/activity-leaderboard', async (req, res) => {
           status: 1
         }
       },
-      { $sort: { activityScore: -1 } },
-      { $limit: 7 } // Top 7 most active candidates
+      { $sort: { activityScore: -1 } }
+      // Remove limit here - we'll apply it after filtering by status
     ]);
 
-    // Calculate activity status for each candidate
-    const leaderboardData = candidateActivity.map((candidate, index) => {
-      const { submissionsCount, interviewsCount, offersCount, activityScore } = candidate;
-      
-      // Determine activity status based on thresholds
-      let status = 'Dead';
-      let statusClass = 'danger';
-      
-      if (activityScore >= 20) {
-        status = 'Super Active';
-        statusClass = 'success';
-      } else if (activityScore >= 10) {
-        status = 'Active';
-        statusClass = 'primary';
-      } else if (activityScore >= 5) {
-        status = 'Moderate';
-        statusClass = 'warning';
-      } else if (activityScore >= 1) {
-        status = 'Low';
-        statusClass = 'info';
-      }
-      
-      return {
-        rank: index + 1,
-        name: `${candidate.firstName} ${candidate.lastName}`,
-        submissions: submissionsCount,
-        interviews: interviewsCount,
-        offers: offersCount,
-        activityScore: activityScore,
-        status: status,
-        statusClass: statusClass
-      };
-    });
+    // Calculate activity status for each candidate and filter for Super Active and Active only
+    const leaderboardData = candidateActivity
+      .map((candidate, index) => {
+        const { submissionsCount, interviewsCount, offersCount, activityScore } = candidate;
+        
+        // Determine activity status based on thresholds
+        let status = 'Dead';
+        let statusClass = 'danger';
+        
+        if (activityScore >= 20) {
+          status = 'Super Active';
+          statusClass = 'success';
+        } else if (activityScore >= 10) {
+          status = 'Active';
+          statusClass = 'primary';
+        } else if (activityScore >= 5) {
+          status = 'Moderate';
+          statusClass = 'warning';
+        } else if (activityScore >= 1) {
+          status = 'Low';
+          statusClass = 'info';
+        }
+        
+        return {
+          rank: index + 1,
+          name: `${candidate.firstName} ${candidate.lastName}`,
+          profileImage: candidate.profileImage,
+          submissions: submissionsCount,
+          interviews: interviewsCount,
+          offers: offersCount,
+          activityScore: activityScore,
+          status: status,
+          statusClass: statusClass
+        };
+      })
+      .filter(candidate => candidate.status === 'Super Active' || candidate.status === 'Active');
+
+    // For dashboard (limit=7), show only top 7. For view all pages, use pagination
+    let finalData;
+    if (parseInt(limit) === 7) {
+      // Dashboard view - show only top 7
+      finalData = leaderboardData.slice(0, 7);
+    } else {
+      // View all page - use pagination
+      const startIndex = (parseInt(page) - 1) * parseInt(limit);
+      const endIndex = startIndex + parseInt(limit);
+      finalData = leaderboardData.slice(startIndex, endIndex);
+    }
 
     res.json({
       success: true,
-      data: leaderboardData
+      data: finalData,
+      total: leaderboardData.length,
+      page: parseInt(page),
+      limit: parseInt(limit)
     });
   } catch (error) {
     console.error('Error fetching candidate activity leaderboard:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch candidate activity leaderboard',
+      error: error.message
+    });
+  }
+});
+
+// GET DEAD AND LOW CANDIDATES
+router.get('/dashboard/dead-low-candidates', async (req, res) => {
+  try {
+    const { filter = 'monthly', page = 1, limit = 7 } = req.query;
+    
+    // Build date filter for activity calculation based on the selected period
+    const now = new Date();
+    let activityDateFilter = {};
+    
+    switch (filter) {
+      case 'all':
+        // No date filter - calculate activity based on all-time data
+        break;
+      case 'weekly':
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: weekAgo };
+        break;
+      case 'monthly':
+        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: monthAgo };
+        break;
+      case '3months':
+        const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: threeMonthsAgo };
+        break;
+      case '6months':
+        const sixMonthsAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: sixMonthsAgo };
+        break;
+      default:
+        const defaultMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        activityDateFilter = { $gte: defaultMonthAgo };
+    }
+    
+    const baseFilter = { 
+      isDeleted: { $ne: true },
+      status: { $ne: 'Hired' } // Exclude hired candidates
+    };
+    
+    const candidateActivity = await Candidate.aggregate([
+      { $match: baseFilter },
+      {
+        $addFields: {
+          submissionsCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$submissions', []] },
+                cond: Object.keys(activityDateFilter).length > 0 ? 
+                  { $gte: ['$$this.submissionDate', activityDateFilter.$gte] } : 
+                  true
+              }
+            }
+          },
+          interviewsCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$interviews', []] },
+                cond: Object.keys(activityDateFilter).length > 0 ? 
+                  { $gte: ['$$this.scheduledDate', activityDateFilter.$gte] } : 
+                  true
+              }
+            }
+          },
+          offersCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$offerDetails', []] },
+                cond: Object.keys(activityDateFilter).length > 0 ? 
+                  { $gte: ['$$this.createdAt', activityDateFilter.$gte] } : 
+                  true
+              }
+            }
+          },
+          activityScore: {
+            $add: [
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$submissions', []] },
+                    cond: Object.keys(activityDateFilter).length > 0 ? 
+                      { $gte: ['$$this.submissionDate', activityDateFilter.$gte] } : 
+                      true
+                  }
+                }
+              },
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$interviews', []] },
+                    cond: Object.keys(activityDateFilter).length > 0 ? 
+                      { $gte: ['$$this.scheduledDate', activityDateFilter.$gte] } : 
+                      true
+                  }
+                }
+              },
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$offerDetails', []] },
+                    cond: Object.keys(activityDateFilter).length > 0 ? 
+                      { $gte: ['$$this.createdAt', activityDateFilter.$gte] } : 
+                      true
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          profileImage: 1,
+          submissionsCount: 1,
+          interviewsCount: 1,
+          offersCount: 1,
+          activityScore: 1,
+          status: 1
+        }
+      },
+      { $sort: { activityScore: 1 } } // Sort ascending to get lowest activity first
+      // Remove limit here - we'll apply it after filtering by status
+    ]);
+
+    // Calculate activity status for each candidate and filter for Dead and Low only
+    const deadLowData = candidateActivity
+      .map((candidate, index) => {
+        const { submissionsCount, interviewsCount, offersCount, activityScore } = candidate;
+        
+        // Determine activity status based on thresholds
+        let status = 'Dead';
+        let statusClass = 'danger';
+        
+        if (activityScore >= 20) {
+          status = 'Super Active';
+          statusClass = 'success';
+        } else if (activityScore >= 10) {
+          status = 'Active';
+          statusClass = 'primary';
+        } else if (activityScore >= 5) {
+          status = 'Moderate';
+          statusClass = 'warning';
+        } else if (activityScore >= 1) {
+          status = 'Low';
+          statusClass = 'info';
+        }
+        
+        return {
+          rank: index + 1,
+          name: `${candidate.firstName} ${candidate.lastName}`,
+          profileImage: candidate.profileImage,
+          submissions: submissionsCount,
+          interviews: interviewsCount,
+          offers: offersCount,
+          activityScore: activityScore,
+          status: status,
+          statusClass: statusClass
+        };
+      })
+      .filter(candidate => candidate.status === 'Dead' || candidate.status === 'Low');
+
+    // For dashboard (limit=7), show only top 7. For view all pages, use pagination
+    let finalData;
+    if (parseInt(limit) === 7) {
+      // Dashboard view - show only top 7
+      finalData = deadLowData.slice(0, 7);
+    } else {
+      // View all page - use pagination
+      const startIndex = (parseInt(page) - 1) * parseInt(limit);
+      const endIndex = startIndex + parseInt(limit);
+      finalData = deadLowData.slice(startIndex, endIndex);
+    }
+
+    res.json({
+      success: true,
+      data: finalData,
+      total: deadLowData.length,
+      page: parseInt(page),
+      limit: parseInt(limit)
+    });
+  } catch (error) {
+    console.error('Error fetching dead and low candidates:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch dead and low candidates',
+      error: error.message
+    });
+  }
+});
+
+// GET SUBMISSIONS VS JOB OFFERS VS INTERVIEW SCHEDULES TREND
+router.get('/dashboard/submissions-vs-hires-trend', async (req, res) => {
+  try {
+    // Always generate data for the current year (January to December)
+    const currentYear = new Date().getFullYear();
+    const startDate = new Date(currentYear, 0, 1); // January 1st
+    const endDate = new Date(currentYear, 11, 31); // December 31st
+    
+    // Generate submissions data by month
+    const submissionsData = await Candidate.aggregate([
+      {
+        $match: {
+          isDeleted: { $ne: true },
+          'submissions.submissionDate': {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $unwind: '$submissions'
+      },
+      {
+        $match: {
+          'submissions.submissionDate': {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$submissions.submissionDate' },
+            month: { $month: '$submissions.submissionDate' }
+          },
+          submissions: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { '_id.year': 1, '_id.month': 1 }
+      }
+    ]);
+
+    // Generate job offers data by month
+    const jobOffersData = await Candidate.aggregate([
+      {
+        $match: {
+          isDeleted: { $ne: true },
+          'offerDetails.createdAt': {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $unwind: '$offerDetails'
+      },
+      {
+        $match: {
+          'offerDetails.createdAt': {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$offerDetails.createdAt' },
+            month: { $month: '$offerDetails.createdAt' }
+          },
+          jobOffers: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { '_id.year': 1, '_id.month': 1 }
+      }
+    ]);
+
+    // Generate interview schedules data by month
+    const interviewSchedulesData = await Candidate.aggregate([
+      {
+        $match: {
+          isDeleted: { $ne: true },
+          'interviews.scheduledDate': {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $unwind: '$interviews'
+      },
+      {
+        $match: {
+          'interviews.scheduledDate': {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$interviews.scheduledDate' },
+            month: { $month: '$interviews.scheduledDate' }
+          },
+          interviewSchedules: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { '_id.year': 1, '_id.month': 1 }
+      }
+    ]);
+
+    // Create maps for easy lookup
+    const submissionsMap = new Map();
+    submissionsData.forEach(item => {
+      const key = `${item._id.year}-${item._id.month}`;
+      submissionsMap.set(key, item.submissions);
+    });
+
+    const jobOffersMap = new Map();
+    jobOffersData.forEach(item => {
+      const key = `${item._id.year}-${item._id.month}`;
+      jobOffersMap.set(key, item.jobOffers);
+    });
+
+    const interviewSchedulesMap = new Map();
+    interviewSchedulesData.forEach(item => {
+      const key = `${item._id.year}-${item._id.month}`;
+      interviewSchedulesMap.set(key, item.interviewSchedules);
+    });
+
+    // Generate all months in the range
+    const result = [];
+    const currentDate = new Date(startDate);
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    while (currentDate <= endDate) {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth() + 1;
+      const key = `${year}-${month}`;
+      
+      result.push({
+        month: monthNames[currentDate.getMonth()],
+        submissions: submissionsMap.get(key) || 0,
+        jobOffers: jobOffersMap.get(key) || 0,
+        interviewSchedules: interviewSchedulesMap.get(key) || 0
+      });
+      
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error fetching submissions vs job offers vs interview schedules trend:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch submissions vs job offers vs interview schedules trend',
+      error: error.message
+    });
+  }
+});
+
+// GET INTERVIEW OUTCOMES
+router.get('/dashboard/interview-outcomes', async (req, res) => {
+  try {
+    // Aggregate interview outcomes by status
+    const interviewOutcomes = await Candidate.aggregate([
+      {
+        $match: {
+          isDeleted: { $ne: true },
+          'interviews.0': { $exists: true } // Only candidates with interviews
+        }
+      },
+      {
+        $unwind: '$interviews'
+      },
+      {
+        $group: {
+          _id: '$interviews.status',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+
+    // Calculate total interviews
+    const totalInterviews = interviewOutcomes.reduce((sum, outcome) => sum + outcome.count, 0);
+
+    // Add percentage to each outcome
+    const outcomesWithPercentage = interviewOutcomes.map(outcome => ({
+      status: outcome._id,
+      count: outcome.count,
+      percentage: totalInterviews > 0 ? Math.round((outcome.count / totalInterviews) * 100 * 10) / 10 : 0
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        outcomes: outcomesWithPercentage,
+        totalInterviews: totalInterviews
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching interview outcomes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch interview outcomes',
+      error: error.message
+    });
+  }
+});
+
+// GET HIRING PIPELINE
+router.get('/dashboard/hiring-pipeline', async (req, res) => {
+  try {
+    // Aggregate candidates by status
+    const hiringPipeline = await Candidate.aggregate([
+      {
+        $match: {
+          isDeleted: { $ne: true }
+        }
+      },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+
+    // Calculate total candidates
+    const totalCandidates = hiringPipeline.reduce((sum, status) => sum + status.count, 0);
+
+    // Add percentage to each status
+    const pipelineWithPercentage = hiringPipeline.map(status => ({
+      status: status._id,
+      count: status.count,
+      percentage: totalCandidates > 0 ? Math.round((status.count / totalCandidates) * 100 * 10) / 10 : 0
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        pipeline: pipelineWithPercentage,
+        totalCandidates: totalCandidates
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching hiring pipeline:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch hiring pipeline',
       error: error.message
     });
   }
