@@ -10,7 +10,7 @@ const router = express.Router();
 // GET performance settings
 router.get('/', auth, role(['admin', 'hr']), async (req, res) => {
   try {
-    console.log('🔍 GET /performance-settings - User:', req.user);
+    // Removed debug log to reduce console noise
     
     const settings = await PerformanceSettings.getCurrentSettings();
     
@@ -111,7 +111,7 @@ router.put('/', auth, role(['admin', 'hr']), async (req, res) => {
 // GET employee performance data with calculated performance levels
 router.get('/employee-performance', auth, role(['admin', 'hr']), async (req, res) => {
   try {
-    console.log('🔍 GET /performance-settings/employee-performance - User:', req.user);
+    // Removed debug log to reduce console noise
     
     const { employeeId, dateFrom, dateTo } = req.query;
     
@@ -231,7 +231,7 @@ router.get('/employee-performance', auth, role(['admin', 'hr']), async (req, res
 // GET performance preview with example calculations
 router.get('/preview', auth, role(['admin', 'hr']), async (req, res) => {
   try {
-    console.log('🔍 GET /performance-settings/preview - User:', req.user);
+    // Removed debug log to reduce console noise
     
     const settings = await PerformanceSettings.getCurrentSettings();
     
