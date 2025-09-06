@@ -10,7 +10,7 @@ const router = express.Router();
 // Get all attendance records (with pagination and filters)
 router.get('/', auth, async (req, res) => {
   try {
-    console.log('🔍 GET /attendance - User:', req.user);
+    // Removed debug log to reduce console noise
     
     const { page = 1, limit = 10, employeeId, startDate, endDate, status, sortBy = 'date', sortOrder = 'desc' } = req.query;
     
@@ -23,16 +23,12 @@ router.get('/', auth, async (req, res) => {
     
     // Filter by date range
     if (startDate && endDate) {
-      console.log('📅 Date filter - startDate:', startDate, 'endDate:', endDate);
-      
       // Create start and end of day for proper date comparison
       const startOfDay = new Date(startDate);
       startOfDay.setHours(0, 0, 0, 0);
       
       const endOfDay = new Date(endDate);
       endOfDay.setHours(23, 59, 59, 999);
-      
-      console.log('📅 Date filter - startOfDay:', startOfDay, 'endOfDay:', endOfDay);
       
       query.date = {
         $gte: startOfDay,

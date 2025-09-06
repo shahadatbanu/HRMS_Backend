@@ -2452,6 +2452,194 @@ router.get('/interview-schedules/dashboard', async (req, res) => {
   }
 });
 
+// GET CANDIDATE DASHBOARD STATISTICS
+router.get('/dashboard/stats', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    
+    // Import the service
+    const CandidateMetricsService = require('../services/candidateMetricsService');
+    
+    // Get dashboard metrics using the service
+    const metrics = await CandidateMetricsService.getDashboardMetrics({
+      dateFrom,
+      dateTo
+    });
+
+    res.json({
+      success: true,
+      data: metrics
+    });
+
+  } catch (error) {
+    console.error('Error fetching candidate dashboard statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET CANDIDATES PER RECRUITER DATA
+router.get('/dashboard/candidates-per-recruiter', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    
+    // Build date filter
+    const dateFilter = {};
+    if (dateFrom || dateTo) {
+      dateFilter.createdAt = {};
+      if (dateFrom) dateFilter.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) dateFilter.createdAt.$lte = new Date(dateTo);
+    }
+
+    // Base filter excluding soft deleted candidates
+    const baseFilter = { isDeleted: { $ne: true }, ...dateFilter };
+
+    // Get candidates per recruiter with aggregation
+    const candidatesPerRecruiter = await Candidate.aggregate([
+      { $match: baseFilter },
+      {
+        $lookup: {
+          from: 'employees',
+          localField: 'assignedTo',
+          foreignField: '_id',
+          as: 'recruiter'
+        }
+      },
+      { $unwind: { path: '$recruiter', preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: '$assignedTo',
+          recruiterName: { 
+            $first: { 
+              $cond: [
+                { $and: [
+                  { $ne: ['$assignedTo', null] },
+                  { $ne: ['$recruiter', null] }
+                ]},
+                { $concat: ['$recruiter.firstName', ' ', '$recruiter.lastName'] },
+                'Unassigned'
+              ]
+            }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 50 } // Limit to top 50 recruiters for performance
+    ]);
+
+    // Calculate total candidates for percentage calculation
+    const totalCandidates = candidatesPerRecruiter.reduce((sum, item) => sum + item.count, 0);
+
+    // Transform data to include percentages
+    const dataWithPercentages = candidatesPerRecruiter.map(item => ({
+      recruiter: item.recruiterName,
+      count: item.count,
+      percentage: totalCandidates > 0 ? Math.round((item.count / totalCandidates) * 100 * 10) / 10 : 0
+    }));
+
+    res.json({
+      success: true,
+      data: dataWithPercentages,
+      totalCandidates: totalCandidates
+    });
+
+  } catch (error) {
+    console.error('Error fetching candidates per recruiter data:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET CANDIDATE ACTIVITY LEADERBOARD
+router.get('/dashboard/activity-leaderboard', async (req, res) => {
+  try {
+    const baseFilter = { isDeleted: { $ne: true } };
+    
+    const candidateActivity = await Candidate.aggregate([
+      { $match: baseFilter },
+      {
+        $addFields: {
+          submissionsCount: { $size: { $ifNull: ['$submissions', []] } },
+          interviewsCount: { $size: { $ifNull: ['$interviews', []] } },
+          offersCount: { $size: { $ifNull: ['$offerDetails', []] } },
+          activityScore: {
+            $add: [
+              { $size: { $ifNull: ['$submissions', []] } },
+              { $size: { $ifNull: ['$interviews', []] } },
+              { $size: { $ifNull: ['$offerDetails', []] } }
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          submissionsCount: 1,
+          interviewsCount: 1,
+          offersCount: 1,
+          activityScore: 1,
+          status: 1
+        }
+      },
+      { $sort: { activityScore: -1 } },
+      { $limit: 7 } // Top 7 most active candidates
+    ]);
+
+    // Calculate activity status for each candidate
+    const leaderboardData = candidateActivity.map((candidate, index) => {
+      const { submissionsCount, interviewsCount, offersCount, activityScore } = candidate;
+      
+      // Determine activity status based on thresholds
+      let status = 'Dead';
+      let statusClass = 'danger';
+      
+      if (activityScore >= 20) {
+        status = 'Super Active';
+        statusClass = 'success';
+      } else if (activityScore >= 10) {
+        status = 'Active';
+        statusClass = 'primary';
+      } else if (activityScore >= 5) {
+        status = 'Moderate';
+        statusClass = 'warning';
+      } else if (activityScore >= 1) {
+        status = 'Low';
+        statusClass = 'info';
+      }
+      
+      return {
+        rank: index + 1,
+        name: `${candidate.firstName} ${candidate.lastName}`,
+        submissions: submissionsCount,
+        interviews: interviewsCount,
+        offers: offersCount,
+        activityScore: activityScore,
+        status: status,
+        statusClass: statusClass
+      };
+    });
+
+    res.json({
+      success: true,
+      data: leaderboardData
+    });
+  } catch (error) {
+    console.error('Error fetching candidate activity leaderboard:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch candidate activity leaderboard',
+      error: error.message
+    });
+  }
+});
+
 // EXPORT SUBMISSIONS TO EXCEL
 router.post('/:id/submissions/export', async (req, res) => {
   try {
