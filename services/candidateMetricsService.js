@@ -8,7 +8,11 @@ class CandidateMetricsService {
    * @returns {Promise<number>} Total count of candidates
    */
   static async getTotalCandidates(filter = {}) {
-    const baseFilter = { isDeleted: { $ne: true }, ...filter };
+    const baseFilter = { 
+      isDeleted: { $ne: true }, 
+      status: { $ne: 'Hired' }, // Exclude hired candidates
+      ...filter 
+    };
     return await Candidate.countDocuments(baseFilter);
   }
 
@@ -22,7 +26,11 @@ class CandidateMetricsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
-    const baseFilter = { isDeleted: { $ne: true }, ...filter };
+    const baseFilter = { 
+      isDeleted: { $ne: true }, 
+      status: { $ne: 'Hired' }, // Exclude hired candidates
+      ...filter 
+    };
     
     // Find candidates with activity in the last 30 days
     const activeCandidates = await Candidate.aggregate([
@@ -175,7 +183,11 @@ class CandidateMetricsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
-    const baseFilter = { isDeleted: { $ne: true }, ...filter };
+    const baseFilter = { 
+      isDeleted: { $ne: true }, 
+      status: { $ne: 'Hired' }, // Exclude hired candidates
+      ...filter 
+    };
 
     // Get recruiter activity scores
     const recruiterActivity = await Candidate.aggregate([
