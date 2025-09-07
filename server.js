@@ -115,7 +115,7 @@ app.use('/api/todos', todosRoutes);
 
 // Activities routes
 app.use('/api/activities', activitiesRoutes);
-app.use("/", (req, res) => {
+app.use("/testing", (req, res) => {
   res.send("API is running....");
 });
 
