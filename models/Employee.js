@@ -85,6 +85,9 @@ const EmployeeSchema = new mongoose.Schema({
     note: { type: String },
   }],
 
+  // Team structure
+  teamLeadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // For recruiters to reference their team lead
+
   // Termination status
   terminated: { type: Boolean, default: false },
   resigned: { type: Boolean, default: false },
