@@ -1177,9 +1177,9 @@ router.post('/:id/interviews', async (req, res) => {
       });
     }
 
-    // Validate interview date is not in the past
+    // Validate interview date is not in the past (US Central Time)
     const selectedDate = new Date(scheduledDate);
-    const now = new Date();
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     if (selectedDate < now) {
       return res.status(400).json({
         success: false,
@@ -1270,9 +1270,9 @@ router.put('/:id/interviews/:interviewId', async (req, res) => {
       });
     }
 
-    // Validate interview date is not in the past
+    // Validate interview date is not in the past (US Central Time)
     const selectedDate = new Date(scheduledDate);
-    const now = new Date();
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     if (selectedDate < now) {
       return res.status(400).json({
         success: false,
@@ -2482,9 +2482,9 @@ router.post('/:id/submissions', async (req, res) => {
   try {
     const { submissionDate, submissionNumber } = req.body;
 
-    // Validate submission date is not in the future
+    // Validate submission date is not in the future (US Central Time)
     const selectedDate = new Date(submissionDate);
-    const today = new Date();
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
     
     if (selectedDate > today) {
@@ -2574,9 +2574,9 @@ router.put('/:id/submissions/:submissionId', async (req, res) => {
   try {
     const { submissionDate, submissionNumber } = req.body;
 
-    // Validate submission date is not in the future
+    // Validate submission date is not in the future (US Central Time)
     const selectedDate = new Date(submissionDate);
-    const today = new Date();
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
     
     if (selectedDate > today) {

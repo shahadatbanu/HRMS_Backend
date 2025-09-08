@@ -62,7 +62,7 @@ class CronService {
         }
       }, {
         scheduled: true,
-        timezone: "Asia/Kolkata" // Changed from UTC to IST
+        timezone: "America/Chicago" // US Central Time
       });
 
       console.log('✅ Absence marking job scheduled successfully');
