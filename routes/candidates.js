@@ -324,7 +324,17 @@ router.get('/', async (req, res) => {
     }
 
     // Experience filter
-    if (experience) filter.yearsOfExperience = { $gte: parseInt(experience) };
+    if (experience) {
+      if (experience === '0-2') {
+        filter.yearsOfExperience = { $gte: 0, $lte: 2 };
+      } else if (experience === '3-5') {
+        filter.yearsOfExperience = { $gte: 3, $lte: 5 };
+      } else if (experience === '6-10') {
+        filter.yearsOfExperience = { $gte: 6, $lte: 10 };
+      } else if (experience === '10+') {
+        filter.yearsOfExperience = { $gte: 10 };
+      }
+    }
 
     // Tech stack filter
     if (techStack) {
