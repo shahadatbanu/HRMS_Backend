@@ -451,12 +451,14 @@ router.get('/employee-interviews', async (req, res) => {
     console.log('🔍 API: Employee full name:', employeeFullName);
 
     // Find candidates where either:
-    // 1. The candidate is assigned to this employee, OR
-    // 2. The candidate has interviews where this employee is the interviewer
+    // 1. The candidate is assigned to this employee as recruiter, OR
+    // 2. The candidate is assigned to this employee as team lead, OR
+    // 3. The candidate has interviews where this employee is the interviewer
     const query = {
       isDeleted: { $ne: true },
       $or: [
-        { assignedTo: employeeId }, // Candidate assigned to this employee
+        { assignedTo: employeeId }, // Candidate assigned to this employee as recruiter
+        { teamLead: employeeId }, // Candidate assigned to this employee as team lead
         { 
           'interviews.status': 'Scheduled' // Any scheduled interview
         }
@@ -468,7 +470,8 @@ router.get('/employee-interviews', async (req, res) => {
     const candidates = await Candidate.find(query)
     .populate('assignedTo', 'firstName lastName profileImage')
     .populate('recruiter', 'firstName lastName profileImage')
-    .select('firstName lastName appliedRole interviews profileImage')
+    .populate('teamLead', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage assignedTo recruiter teamLead')
     .sort({ 'interviews.scheduledDate': -1 }); // Sort by most recent first
     
     console.log('🔍 API: Found candidates:', candidates.length);
@@ -503,9 +506,12 @@ router.get('/employee-interviews', async (req, res) => {
         );
         
         console.log('🔍 API: Interview check:', {
+          candidateName: `${candidate.firstName} ${candidate.lastName}`,
           interviewer: interview.interviewer,
           employeeFirstName,
           employeeFullName: employeeFullName.toLowerCase(),
+          candidateAssignedTo: candidate.assignedTo,
+          candidateTeamLead: candidate.teamLead,
           isAssignedToEmployee,
           isAssignedAsTeamLead,
           isInterviewer,
@@ -659,12 +665,14 @@ router.get('/upcoming-interviews', async (req, res) => {
     sevenDaysFromNow.setHours(23, 59, 59, 999);
     
     // Find candidates where either:
-    // 1. The candidate is assigned to this employee, OR
-    // 2. The candidate has interviews where this employee is the interviewer
+    // 1. The candidate is assigned to this employee as recruiter, OR
+    // 2. The candidate is assigned to this employee as team lead, OR
+    // 3. The candidate has interviews where this employee is the interviewer
     const query = {
       isDeleted: { $ne: true },
       $or: [
-        { assignedTo: employeeId }, // Candidate assigned to this employee
+        { assignedTo: employeeId }, // Candidate assigned to this employee as recruiter
+        { teamLead: employeeId }, // Candidate assigned to this employee as team lead
         { 
           'interviews.scheduledDate': { 
             $gte: todayDate,
@@ -680,13 +688,15 @@ router.get('/upcoming-interviews', async (req, res) => {
     const candidates = await Candidate.find(query)
     .populate('assignedTo', 'firstName lastName profileImage')
     .populate('recruiter', 'firstName lastName profileImage')
-    .select('firstName lastName appliedRole interviews profileImage')
+    .populate('teamLead', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage assignedTo recruiter teamLead')
     .sort({ 'interviews.scheduledDate': 1 });
     
     console.log('🔍 API: Found candidates:', candidates.length);
     console.log('🔍 API: Candidates data:', JSON.stringify(candidates.map(c => ({
       name: `${c.firstName} ${c.lastName}`,
       assignedTo: c.assignedTo,
+      teamLead: c.teamLead,
       interviews: c.interviews.map(i => ({
         interviewer: i.interviewer,
         scheduledDate: i.scheduledDate,
@@ -703,7 +713,7 @@ router.get('/upcoming-interviews', async (req, res) => {
         const interviewDateOnly = new Date(interviewDate.getFullYear(), interviewDate.getMonth(), interviewDate.getDate());
         
         // Include interviews where:
-        // 1. The candidate is assigned to this employee (show only upcoming interviews), OR
+        // 1. The candidate is assigned to this employee as recruiter (show only upcoming interviews), OR
         // 2. The candidate is assigned to this employee as Team Lead (show only upcoming interviews), OR
         // 3. This employee is the interviewer (show only upcoming interviews)
         const isAssignedToEmployee = candidate.assignedTo?._id?.toString() === employeeId || 
@@ -725,9 +735,12 @@ router.get('/upcoming-interviews', async (req, res) => {
         );
         
         console.log('🔍 API: Interview check:', {
+          candidateName: `${candidate.firstName} ${candidate.lastName}`,
           interviewer: interview.interviewer,
           employeeFirstName,
           employeeFullName: employeeFullName.toLowerCase(),
+          candidateAssignedTo: candidate.assignedTo,
+          candidateTeamLead: candidate.teamLead,
           isAssignedToEmployee,
           isAssignedAsTeamLead,
           isInterviewer,
