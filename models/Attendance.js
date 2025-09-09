@@ -117,6 +117,7 @@ attendanceSchema.index({ date: 1 });
 // Virtual for formatted date
 attendanceSchema.virtual('formattedDate').get(function() {
   return this.date.toLocaleDateString('en-US', {
+    timeZone: 'America/Chicago',
     day: '2-digit',
     month: 'short',
     year: 'numeric'
@@ -127,6 +128,7 @@ attendanceSchema.virtual('formattedDate').get(function() {
 attendanceSchema.virtual('formattedCheckIn').get(function() {
   if (this.checkIn && this.checkIn.time) {
     return this.checkIn.time.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago',
       hour: '2-digit',
       minute: '2-digit',
       hour12: true
@@ -139,6 +141,7 @@ attendanceSchema.virtual('formattedCheckIn').get(function() {
 attendanceSchema.virtual('formattedCheckOut').get(function() {
   if (this.checkOut && this.checkOut.time) {
     return this.checkOut.time.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago',
       hour: '2-digit',
       minute: '2-digit',
       hour12: true

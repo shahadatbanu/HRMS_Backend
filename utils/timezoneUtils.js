@@ -26,7 +26,36 @@ function toUSCentralTime(date) {
  * @returns {Date} - Current time in US Central Time
  */
 function getCurrentUSCentralTime() {
-  return new Date(new Date().toLocaleString("en-US", { timeZone: US_CENTRAL_TIMEZONE }));
+  // Get current time in UTC
+  const now = new Date();
+  
+  // Get the timezone offset for US Central Time
+  // We need to find what UTC time corresponds to the current time in US Central Time
+  const centralTimeString = now.toLocaleString("en-US", { timeZone: US_CENTRAL_TIMEZONE });
+  
+  // Parse the central time string to get the components
+  const [datePart, timePart] = centralTimeString.split(', ');
+  const [month, day, year] = datePart.split('/');
+  const [time, period] = timePart.split(' ');
+  const [hours, minutes, seconds] = time.split(':');
+  
+  // Convert to 24-hour format
+  let hour24 = parseInt(hours);
+  if (period === 'PM' && hour24 !== 12) {
+    hour24 += 12;
+  } else if (period === 'AM' && hour24 === 12) {
+    hour24 = 0;
+  }
+  
+  // Create a date object for the central time
+  const centralDate = new Date(year, month - 1, day, hour24, parseInt(minutes), parseInt(seconds || 0), 0);
+  
+  // Calculate the offset between this central time and UTC
+  const utcTime = new Date(centralDate.toISOString());
+  const offset = centralDate.getTime() - utcTime.getTime();
+  
+  // Apply the offset to get the correct UTC time that represents current Central Time
+  return new Date(now.getTime() + offset);
 }
 
 /**
@@ -112,11 +141,23 @@ function getStartOfDayUSCentral(date) {
   const inputDate = new Date(date);
   if (isNaN(inputDate.getTime())) return null;
   
-  // Get the date in US Central Time
-  const centralDate = new Date(inputDate.toLocaleString("en-US", { timeZone: US_CENTRAL_TIMEZONE }));
-  centralDate.setHours(0, 0, 0, 0);
+  // Get the date string in US Central Time
+  const centralDateString = inputDate.toLocaleDateString("en-US", { timeZone: US_CENTRAL_TIMEZONE });
+  const [month, day, year] = centralDateString.split('/');
   
-  return centralDate;
+  // Create a date object for midnight in US Central Time
+  // We need to create this as if it were in US Central Time, then convert to UTC
+  const centralMidnight = new Date(year, month - 1, day, 0, 0, 0, 0);
+  
+  // Get the timezone offset for US Central Time on this date
+  // We'll use a known time to calculate the offset
+  const testTime = new Date(year, month - 1, day, 12, 0, 0, 0); // Noon
+  const centralTime = new Date(testTime.toLocaleString("en-US", { timeZone: US_CENTRAL_TIMEZONE }));
+  const utcTime = new Date(testTime.toISOString());
+  const offset = utcTime.getTime() - centralTime.getTime();
+  
+  // Apply the offset to get the correct UTC time for midnight in US Central Time
+  return new Date(centralMidnight.getTime() + offset);
 }
 
 /**
@@ -130,11 +171,21 @@ function getEndOfDayUSCentral(date) {
   const inputDate = new Date(date);
   if (isNaN(inputDate.getTime())) return null;
   
-  // Get the date in US Central Time
-  const centralDate = new Date(inputDate.toLocaleString("en-US", { timeZone: US_CENTRAL_TIMEZONE }));
-  centralDate.setHours(23, 59, 59, 999);
+  // Get the date string in US Central Time
+  const centralDateString = inputDate.toLocaleDateString("en-US", { timeZone: US_CENTRAL_TIMEZONE });
+  const [month, day, year] = centralDateString.split('/');
   
-  return centralDate;
+  // Create a date object for end of day in US Central Time
+  const centralEndOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+  
+  // Get the timezone offset for US Central Time on this date
+  const testTime = new Date(year, month - 1, day, 12, 0, 0, 0); // Noon
+  const centralTime = new Date(testTime.toLocaleString("en-US", { timeZone: US_CENTRAL_TIMEZONE }));
+  const utcTime = new Date(testTime.toISOString());
+  const offset = utcTime.getTime() - centralTime.getTime();
+  
+  // Apply the offset to get the correct UTC time for end of day in US Central Time
+  return new Date(centralEndOfDay.getTime() + offset);
 }
 
 /**
