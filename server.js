@@ -17,7 +17,8 @@ const resignationRoutes = require('./routes/resignation');
 const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
-const serverless = require("serverless-http");
+const performanceSettingsRoutes = require('./routes/performanceSettings.js');
+
 
 dotenv.config();
 
@@ -63,8 +64,19 @@ app.get('/test', (req, res) => {
   res.json({ message: 'Server is running!' });
 });
 
-// Serve uploaded images
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded images with proper cache headers
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  maxAge: '1y', // Cache for 1 year
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, path) => {
+    // Set cache headers for images
+    if (path.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Expires', new Date(Date.now() + 31536000000).toUTCString());
+    }
+  }
+}));
 
 // Employee routes
 app.use('/api/employees', employeesRoutes);
@@ -103,11 +115,33 @@ app.use('/api/todos', todosRoutes);
 
 // Activities routes
 app.use('/api/activities', activitiesRoutes);
-app.use("/", (req, res) => {
+app.use("/testing", (req, res) => {
   res.send("API is running....");
 });
 
-const PORT = process.env.PORT || 5000;app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+// const PORT = process.env.PORT || 5000;app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
 //module.exports = app;
 //module.exports.handler = serverless(app);
 
+// Performance settings routes
+app.use('/api/performance-settings', performanceSettingsRoutes);
+
+// Serve static assets with proper cache headers
+app.use(express.static(path.join(__dirname, '../react/build'), {
+  maxAge: '1y',
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, path) => {
+    // Set cache headers for different file types
+    if (path.match(/\.(js|css)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (path.match(/\.(jpg|jpeg|png|gif|webp|svg|ico)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (path.match(/\.(html)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    }
+  }
+}));
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 

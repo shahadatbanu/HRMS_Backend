@@ -13,7 +13,7 @@ const router = express.Router();
 // Get attendance settings
 router.get('/', auth, role(['admin', 'hr']), async (req, res) => {
   try {
-    console.log('🔍 GET /attendance-settings - User:', req.user);
+    // Removed debug log to reduce console noise
     
     let settings = await AttendanceSettings.findOne();
     
@@ -110,7 +110,7 @@ router.post('/mark-absences', auth, role(['admin', 'hr']), async (req, res) => {
 // Get absence marking statistics
 router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
   try {
-    console.log('🔍 GET /attendance-settings/absence-stats - User:', req.user);
+    // Removed debug log to reduce console noise
     
     const { date } = req.query;
     const targetDate = date ? new Date(date) : new Date();

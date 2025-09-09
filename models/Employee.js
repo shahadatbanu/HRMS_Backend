@@ -75,6 +75,16 @@ const EmployeeSchema = new mongoose.Schema({
     endDate: { type: String }
   }],
 
+  // Assigned assets
+  assets: [{
+    itemName: { type: String },
+    assetCode: { type: String },
+    image: { type: String },
+    assignedBy: { type: String },
+    assignedOn: { type: Date },
+    note: { type: String },
+  }],
+
   // Termination status
   terminated: { type: Boolean, default: false },
   resigned: { type: Boolean, default: false },
