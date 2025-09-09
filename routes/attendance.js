@@ -116,6 +116,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
     // Format the attendance records
     const formattedRecords = attendanceRecords.map(record => {
       const formattedDate = record.date.toLocaleDateString('en-US', { 
+        timeZone: 'America/Chicago',
         year: 'numeric', 
         month: 'short', 
         day: '2-digit' 
@@ -123,6 +124,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
       
       const formattedCheckIn = record.checkIn && record.checkIn.time 
         ? new Date(record.checkIn.time).toLocaleTimeString('en-US', { 
+            timeZone: 'America/Chicago',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
@@ -131,6 +133,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
       
       const formattedCheckOut = record.checkOut && record.checkOut.time 
         ? new Date(record.checkOut.time).toLocaleTimeString('en-US', { 
+            timeZone: 'America/Chicago',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
