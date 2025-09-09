@@ -4,6 +4,7 @@ const Employee = require('../models/Employee.js');
 const auth = require('../middleware/auth.js');
 const role = require('../middleware/role.js');
 const ActivityService = require('../services/activityService.js');
+const { getCurrentUSCentralTime, getStartOfDayUSCentral, getEndOfDayUSCentral } = require('../utils/timezoneUtils.js');
 
 const router = express.Router();
 
@@ -201,8 +202,9 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
       });
     }
 
-    // Format the attendance record
+    // Format the attendance record (US Central Time)
     const formattedDate = todayAttendance.date.toLocaleDateString('en-US', { 
+      timeZone: 'America/Chicago',
       year: 'numeric', 
       month: 'short', 
       day: '2-digit' 
@@ -210,6 +212,7 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
     
     const formattedCheckIn = todayAttendance.checkIn && todayAttendance.checkIn.time 
       ? new Date(todayAttendance.checkIn.time).toLocaleTimeString('en-US', { 
+          timeZone: 'America/Chicago',
           hour: '2-digit', 
           minute: '2-digit',
           hour12: true 
@@ -218,6 +221,7 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
     
     const formattedCheckOut = todayAttendance.checkOut && todayAttendance.checkOut.time 
       ? new Date(todayAttendance.checkOut.time).toLocaleTimeString('en-US', { 
+          timeZone: 'America/Chicago',
           hour: '2-digit', 
           minute: '2-digit',
           hour12: true 
@@ -275,9 +279,8 @@ router.post('/checkin', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
     
-    // Check if already checked in today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Check if already checked in today (US Central Time)
+    const today = getStartOfDayUSCentral(getCurrentUSCentralTime());
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     

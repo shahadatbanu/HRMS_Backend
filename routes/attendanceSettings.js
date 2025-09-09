@@ -219,9 +219,19 @@ async function markAbsencesForToday() {
       return { marked: 0, skipped: 0, reason: 'Before marking time' };
     }
     
-    // Get all active employees
-    const employees = await Employee.find({ isActive: true });
-    console.log(`👥 Found ${employees.length} active employees`);
+    // Get all active employees (excluding admins)
+    const employees = await Employee.find({ 
+      isActive: true, 
+      role: { $ne: 'admin' } 
+    });
+    
+    // Get count of admin users for logging
+    const adminCount = await Employee.countDocuments({ 
+      isActive: true, 
+      role: 'admin' 
+    });
+    
+    console.log(`👥 Found ${employees.length} active employees (excluding ${adminCount} admins)`);
     
     let markedCount = 0;
     let skippedCount = 0;

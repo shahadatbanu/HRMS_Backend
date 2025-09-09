@@ -141,10 +141,35 @@ router.use((error, req, res, next) => {
   next();
 });
 
-// GET all employees for recruiter dropdown
+// GET all employees for recruiter dropdown (filtered by Recruiter designation)
 router.get('/employees/recruiters', async (req, res) => {
   try {
-    const employees = await Employee.find({ status: 'Active' })
+    const employees = await Employee.find({ 
+      status: 'Active',
+      designation: { $regex: /recruiter/i }
+    })
+      .select('firstName lastName email designation department')
+      .sort({ firstName: 1, lastName: 1 });
+    
+    res.json({
+      success: true,
+      data: employees
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET all employees for team lead dropdown (filtered by Team Lead designation)
+router.get('/employees/team-leads', async (req, res) => {
+  try {
+    const employees = await Employee.find({ 
+      status: 'Active',
+      designation: { $regex: /team lead|team leader/i }
+    })
       .select('firstName lastName email designation department')
       .sort({ firstName: 1, lastName: 1 });
     
@@ -187,6 +212,7 @@ router.post('/', (req, res, next) => {
       profileImage: req.files?.profileImage ? req.files.profileImage[0].filename : undefined,
       assignedBy: req.user.id,
       recruiter: req.body.recruiter || undefined,
+      teamLead: req.body.teamLead || undefined,
       // If recruiter is provided, also set assignedTo to the same value
       assignedTo: req.body.recruiter || undefined,
       assignedDate: req.body.recruiter ? Date.now() : undefined,
@@ -310,9 +336,19 @@ router.get('/', async (req, res) => {
         });
       }
       
-      // Filter to show candidates assigned to this employee (only check assignedTo field)
-      filter.assignedTo = employee._id;
-      console.log('🔍 Debug - filter.assignedTo:', filter.assignedTo);
+      // Check if the employee is a Team Lead
+      const isTeamLead = employee.designation && /team lead|team leader/i.test(employee.designation);
+      console.log('🔍 Debug - isTeamLead:', isTeamLead, 'designation:', employee.designation);
+      
+      if (isTeamLead) {
+        // If user is a Team Lead, show candidates assigned to them as Team Lead
+        filter.teamLead = employee._id;
+        console.log('🔍 Debug - filter.teamLead:', filter.teamLead);
+      } else {
+        // If user is a regular employee (Recruiter), show candidates assigned to them
+        filter.assignedTo = employee._id;
+        console.log('🔍 Debug - filter.assignedTo:', filter.assignedTo);
+      }
     }
 
     // Status filter
@@ -362,6 +398,7 @@ router.get('/', async (req, res) => {
       .populate('assignedTo', 'firstName lastName email profileImage')
       .populate('assignedBy', 'firstName lastName email profileImage')
       .populate('recruiter', 'firstName lastName email profileImage designation')
+      .populate('teamLead', 'firstName lastName email profileImage designation')
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -385,6 +422,366 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET ALL INTERVIEWS FOR SPECIFIC EMPLOYEE (PAST AND UPCOMING)
+router.get('/employee-interviews', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    
+    console.log('🔍 API: Fetching all interviews for employeeId:', employeeId);
+    
+    if (!employeeId) {
+      console.log('❌ API: No employeeId provided');
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID is required'
+      });
+    }
+
+    // Get the employee details to match interviewer name
+    const employee = await Employee.findById(employeeId).select('firstName lastName');
+    if (!employee) {
+      console.log('❌ API: Employee not found for ID:', employeeId);
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    const employeeFullName = `${employee.firstName} ${employee.lastName}`;
+    console.log('🔍 API: Employee full name:', employeeFullName);
+
+    // Find candidates where either:
+    // 1. The candidate is assigned to this employee, OR
+    // 2. The candidate has interviews where this employee is the interviewer
+    const query = {
+      isDeleted: { $ne: true },
+      $or: [
+        { assignedTo: employeeId }, // Candidate assigned to this employee
+        { 
+          'interviews.status': 'Scheduled' // Any scheduled interview
+        }
+      ]
+    };
+    
+    console.log('🔍 API: Query:', JSON.stringify(query, null, 2));
+    
+    const candidates = await Candidate.find(query)
+    .populate('assignedTo', 'firstName lastName profileImage')
+    .populate('recruiter', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage')
+    .sort({ 'interviews.scheduledDate': -1 }); // Sort by most recent first
+    
+    console.log('🔍 API: Found candidates:', candidates.length);
+    
+    // Extract and format all interviews (past and upcoming)
+    const allInterviews = [];
+    
+    candidates.forEach(candidate => {
+      candidate.interviews.forEach(interview => {
+        const interviewDate = new Date(interview.scheduledDate);
+        const interviewDateOnly = new Date(interviewDate.getFullYear(), interviewDate.getMonth(), interviewDate.getDate());
+        
+        // Include interviews where:
+        // 1. The candidate is assigned to this employee (show ALL interviews), OR
+        // 2. The candidate is assigned to this employee as Team Lead (show ALL interviews), OR
+        // 3. This employee is the interviewer (show ALL interviews)
+        const isAssignedToEmployee = candidate.assignedTo?._id?.toString() === employeeId || 
+                                   candidate.assignedTo?.toString() === employeeId;
+        const isAssignedAsTeamLead = candidate.teamLead?._id?.toString() === employeeId || 
+                                   candidate.teamLead?.toString() === employeeId;
+        
+        // Flexible interviewer name matching
+        const employeeFirstName = employee.firstName.toLowerCase();
+        const interviewerName = interview.interviewer.toLowerCase();
+        const isInterviewer = interviewerName.includes(employeeFirstName) || 
+                             interviewerName === employeeFullName.toLowerCase() ||
+                             interviewerName === employeeFirstName;
+        
+        // Show ALL scheduled interviews (past and upcoming) for both assigned candidates and interviewers
+        const shouldShowInterview = interview.status === 'Scheduled' && (
+          isAssignedToEmployee || isAssignedAsTeamLead || isInterviewer
+        );
+        
+        console.log('🔍 API: Interview check:', {
+          interviewer: interview.interviewer,
+          employeeFirstName,
+          employeeFullName: employeeFullName.toLowerCase(),
+          isAssignedToEmployee,
+          isAssignedAsTeamLead,
+          isInterviewer,
+          interviewDate: interviewDateOnly,
+          shouldShowInterview
+        });
+        
+        if (shouldShowInterview) {
+          allInterviews.push({
+            _id: interview._id,
+            candidateId: candidate._id,
+            candidateName: `${candidate.firstName} ${candidate.lastName}`,
+            candidateProfileImage: candidate.profileImage,
+            appliedRole: candidate.appliedRole,
+            scheduledDate: interview.scheduledDate,
+            interviewLevel: interview.interviewLevel || 'Not Specified',
+            interviewer: interview.interviewer,
+            interviewLink: interview.interviewLink,
+            notes: interview.notes,
+            assignedTo: candidate.assignedTo
+          });
+        }
+      });
+    });
+    
+    console.log('🔍 API: Final all interviews:', allInterviews.length);
+    console.log('🔍 API: All interviews data:', JSON.stringify(allInterviews.map(i => ({
+      candidateName: i.candidateName,
+      scheduledDate: i.scheduledDate,
+      interviewer: i.interviewer
+    })), null, 2));
+    
+    res.json({
+      success: true,
+      data: allInterviews,
+      total: allInterviews.length
+    });
+    
+  } catch (error) {
+    console.error('❌ API: Error fetching all interviews:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET ALL INTERVIEWS FOR ADMIN (ALL EMPLOYEES AND CANDIDATES)
+router.get('/admin-interviews', async (req, res) => {
+  try {
+    console.log('🔍 API: Fetching all interviews for admin');
+    
+    // Find all candidates with scheduled interviews
+    const query = {
+      isDeleted: { $ne: true },
+      'interviews.status': 'Scheduled'
+    };
+    
+    console.log('🔍 API: Query:', JSON.stringify(query, null, 2));
+    
+    const candidates = await Candidate.find(query)
+    .populate('assignedTo', 'firstName lastName profileImage')
+    .populate('recruiter', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage')
+    .sort({ 'interviews.scheduledDate': -1 }); // Sort by most recent first
+    
+    console.log('🔍 API: Found candidates:', candidates.length);
+    
+    // Extract and format all interviews
+    const allInterviews = [];
+    
+    candidates.forEach(candidate => {
+      candidate.interviews.forEach(interview => {
+        // Include all scheduled interviews
+        if (interview.status === 'Scheduled') {
+          allInterviews.push({
+            _id: interview._id,
+            candidateId: candidate._id,
+            candidateName: `${candidate.firstName} ${candidate.lastName}`,
+            candidateProfileImage: candidate.profileImage,
+            appliedRole: candidate.appliedRole,
+            scheduledDate: interview.scheduledDate,
+            interviewLevel: interview.interviewLevel || 'Not Specified',
+            interviewer: interview.interviewer,
+            interviewLink: interview.interviewLink,
+            notes: interview.notes,
+            assignedTo: candidate.assignedTo
+          });
+        }
+      });
+    });
+    
+    console.log('🔍 API: Final all interviews:', allInterviews.length);
+    console.log('🔍 API: All interviews data:', JSON.stringify(allInterviews.map(i => ({
+      candidateName: i.candidateName,
+      scheduledDate: i.scheduledDate,
+      interviewer: i.interviewer,
+      assignedTo: i.assignedTo ? `${i.assignedTo.firstName} ${i.assignedTo.lastName}` : 'Not Assigned'
+    })), null, 2));
+    
+    res.json({
+      success: true,
+      data: allInterviews,
+      total: allInterviews.length
+    });
+    
+  } catch (error) {
+    console.error('❌ API: Error fetching admin interviews:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// GET UPCOMING INTERVIEWS FOR SPECIFIC EMPLOYEE
+router.get('/upcoming-interviews', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    
+    console.log('🔍 API: Fetching upcoming interviews for employeeId:', employeeId);
+    
+    if (!employeeId) {
+      console.log('❌ API: No employeeId provided');
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID is required'
+      });
+    }
+
+    // Get the employee details to match interviewer name
+    const employee = await Employee.findById(employeeId).select('firstName lastName');
+    if (!employee) {
+      console.log('❌ API: Employee not found for ID:', employeeId);
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    const employeeFullName = `${employee.firstName} ${employee.lastName}`;
+    console.log('🔍 API: Employee full name:', employeeFullName);
+
+    // Get today's date (start of day)
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    
+    // Get date 7 days from now (end of day)
+    const sevenDaysFromNow = new Date(todayDate);
+    sevenDaysFromNow.setDate(todayDate.getDate() + 7);
+    sevenDaysFromNow.setHours(23, 59, 59, 999);
+    
+    // Find candidates where either:
+    // 1. The candidate is assigned to this employee, OR
+    // 2. The candidate has interviews where this employee is the interviewer
+    const query = {
+      isDeleted: { $ne: true },
+      $or: [
+        { assignedTo: employeeId }, // Candidate assigned to this employee
+        { 
+          'interviews.scheduledDate': { 
+            $gte: todayDate,
+            $lte: sevenDaysFromNow 
+          },
+          'interviews.status': 'Scheduled'
+        }
+      ]
+    };
+    
+    console.log('🔍 API: Query:', JSON.stringify(query, null, 2));
+    
+    const candidates = await Candidate.find(query)
+    .populate('assignedTo', 'firstName lastName profileImage')
+    .populate('recruiter', 'firstName lastName profileImage')
+    .select('firstName lastName appliedRole interviews profileImage')
+    .sort({ 'interviews.scheduledDate': 1 });
+    
+    console.log('🔍 API: Found candidates:', candidates.length);
+    console.log('🔍 API: Candidates data:', JSON.stringify(candidates.map(c => ({
+      name: `${c.firstName} ${c.lastName}`,
+      assignedTo: c.assignedTo,
+      interviews: c.interviews.map(i => ({
+        interviewer: i.interviewer,
+        scheduledDate: i.scheduledDate,
+        status: i.status
+      }))
+    })), null, 2));
+    
+    // Extract and format upcoming interviews
+    const upcomingInterviews = [];
+    
+    candidates.forEach(candidate => {
+      candidate.interviews.forEach(interview => {
+        const interviewDate = new Date(interview.scheduledDate);
+        const interviewDateOnly = new Date(interviewDate.getFullYear(), interviewDate.getMonth(), interviewDate.getDate());
+        
+        // Include interviews where:
+        // 1. The candidate is assigned to this employee (show only upcoming interviews), OR
+        // 2. The candidate is assigned to this employee as Team Lead (show only upcoming interviews), OR
+        // 3. This employee is the interviewer (show only upcoming interviews)
+        const isAssignedToEmployee = candidate.assignedTo?._id?.toString() === employeeId || 
+                                   candidate.assignedTo?.toString() === employeeId;
+        const isAssignedAsTeamLead = candidate.teamLead?._id?.toString() === employeeId || 
+                                   candidate.teamLead?.toString() === employeeId;
+        
+        // Flexible interviewer name matching - check if interviewer name contains employee's first name
+        const employeeFirstName = employee.firstName.toLowerCase();
+        const interviewerName = interview.interviewer.toLowerCase();
+        const isInterviewer = interviewerName.includes(employeeFirstName) || 
+                             interviewerName === employeeFullName.toLowerCase() ||
+                             interviewerName === employeeFirstName;
+        
+        // Show only upcoming interviews (today or future) for both assigned candidates and interviewers
+        const isUpcoming = interviewDateOnly >= todayDate;
+        const shouldShowInterview = interview.status === 'Scheduled' && isUpcoming && (
+          isAssignedToEmployee || isAssignedAsTeamLead || isInterviewer
+        );
+        
+        console.log('🔍 API: Interview check:', {
+          interviewer: interview.interviewer,
+          employeeFirstName,
+          employeeFullName: employeeFullName.toLowerCase(),
+          isAssignedToEmployee,
+          isAssignedAsTeamLead,
+          isInterviewer,
+          interviewDate: interviewDateOnly,
+          todayDate,
+          isUpcoming,
+          shouldShowInterview
+        });
+        
+        if (shouldShowInterview) {
+          
+          upcomingInterviews.push({
+            _id: interview._id,
+            candidateId: candidate._id,
+            candidateName: `${candidate.firstName} ${candidate.lastName}`,
+            candidateProfileImage: candidate.profileImage,
+            appliedRole: candidate.appliedRole || 'Not specified',
+            scheduledDate: interview.scheduledDate,
+            interviewLevel: interview.interviewLevel,
+            interviewer: interview.interviewer,
+            interviewLink: interview.interviewLink,
+            notes: interview.notes,
+            assignedTo: candidate.assignedTo,
+            recruiter: candidate.recruiter
+          });
+        }
+      });
+    });
+    
+    // Sort by scheduled date
+    upcomingInterviews.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+    
+    // Limit to 3 upcoming interviews for dashboard
+    const dashboardInterviews = upcomingInterviews.slice(0, 3);
+    
+    console.log('🔍 API: Final upcoming interviews:', upcomingInterviews.length);
+    console.log('🔍 API: Dashboard interviews:', dashboardInterviews.length);
+    console.log('🔍 API: Dashboard interviews data:', JSON.stringify(dashboardInterviews, null, 2));
+    
+    res.json({
+      success: true,
+      data: dashboardInterviews,
+      total: upcomingInterviews.length
+    });
+  } catch (err) {
+    console.error('Error fetching employee upcoming interviews:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: err.message 
+    });
+  }
+});
+
 // GET BY ID
 router.get('/:id', async (req, res) => {
   try {
@@ -395,6 +792,7 @@ router.get('/:id', async (req, res) => {
       .populate('assignedTo', 'firstName lastName email profileImage')
       .populate('assignedBy', 'firstName lastName email profileImage')
       .populate('recruiter', 'firstName lastName email profileImage designation')
+      .populate('teamLead', 'firstName lastName email profileImage designation')
       .populate('notes.createdBy', 'firstName lastName profileImage email designation')
       .populate('bgCheckNotes.createdBy', 'firstName lastName profileImage email designation')
       .populate('attachments.uploadedBy', 'firstName lastName profileImage email designation')
@@ -429,21 +827,41 @@ router.get('/:id', async (req, res) => {
         });
       }
       
-      // Check if the candidate is assigned to this employee (only check assignedTo field)
-      console.log('🔍 Debug - candidate.assignedTo:', candidate.assignedTo);
-      console.log('🔍 Debug - employee._id:', employee._id);
+      // Check if the employee is a Team Lead
+      const isTeamLead = employee.designation && /team lead|team leader/i.test(employee.designation);
+      console.log('🔍 Debug - isTeamLead:', isTeamLead, 'designation:', employee.designation);
       
-      // More robust comparison - handle populated object
-      const candidateAssignedToId = candidate.assignedTo?._id || candidate.assignedTo;
-      const candidateAssignedTo = candidateAssignedToId?.toString();
-      const employeeIdString = employee._id.toString();
+      let isAssigned = false;
       
-      console.log('🔍 Debug - candidateAssignedTo:', candidateAssignedTo);
-      console.log('🔍 Debug - employeeIdString:', employeeIdString);
-      
-      const isAssigned = candidateAssignedTo === employeeIdString;
-      
-      console.log('🔍 Debug - isAssigned:', isAssigned);
+      if (isTeamLead) {
+        // If user is a Team Lead, check if candidate is assigned to them as Team Lead
+        console.log('🔍 Debug - candidate.teamLead:', candidate.teamLead);
+        console.log('🔍 Debug - employee._id:', employee._id);
+        
+        const candidateTeamLeadId = candidate.teamLead?._id || candidate.teamLead;
+        const candidateTeamLead = candidateTeamLeadId?.toString();
+        const employeeIdString = employee._id.toString();
+        
+        console.log('🔍 Debug - candidateTeamLead:', candidateTeamLead);
+        console.log('🔍 Debug - employeeIdString:', employeeIdString);
+        
+        isAssigned = candidateTeamLead === employeeIdString;
+        console.log('🔍 Debug - isAssigned (Team Lead):', isAssigned);
+      } else {
+        // If user is a regular employee (Recruiter), check if candidate is assigned to them
+        console.log('🔍 Debug - candidate.assignedTo:', candidate.assignedTo);
+        console.log('🔍 Debug - employee._id:', employee._id);
+        
+        const candidateAssignedToId = candidate.assignedTo?._id || candidate.assignedTo;
+        const candidateAssignedTo = candidateAssignedToId?.toString();
+        const employeeIdString = employee._id.toString();
+        
+        console.log('🔍 Debug - candidateAssignedTo:', candidateAssignedTo);
+        console.log('🔍 Debug - employeeIdString:', employeeIdString);
+        
+        isAssigned = candidateAssignedTo === employeeIdString;
+        console.log('🔍 Debug - isAssigned (Recruiter):', isAssigned);
+      }
       
       if (!isAssigned) {
         console.log('❌ Access denied - user is not assigned to this candidate');
@@ -520,6 +938,11 @@ router.put('/:id', (req, res, next) => {
       updateData.assignedTo = req.body.recruiter;
       updateData.assignedBy = req.user._id || req.user.id || req.user.userId;
       updateData.assignedDate = Date.now();
+    }
+
+    // Handle teamLead assignment
+    if (req.body.teamLead) {
+      updateData.teamLead = req.body.teamLead;
     }
 
     // Parse JSON fields if they exist
@@ -693,10 +1116,11 @@ router.put('/:id/status', async (req, res) => {
     }
 
     // Check if user is assigned to this candidate or is HR/Admin
-    const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isAssignedAsRecruiter = candidate.assignedTo?.toString() === employee._id.toString();
+    const isAssignedAsTeamLead = candidate.teamLead?.toString() === employee._id.toString();
     const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
     
-    if (!isAssigned && !isHRorAdmin) {
+    if (!isAssignedAsRecruiter && !isAssignedAsTeamLead && !isHRorAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update this candidate'
@@ -753,9 +1177,9 @@ router.post('/:id/interviews', async (req, res) => {
       });
     }
 
-    // Validate interview date is not in the past
+    // Validate interview date is not in the past (US Central Time)
     const selectedDate = new Date(scheduledDate);
-    const now = new Date();
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     if (selectedDate < now) {
       return res.status(400).json({
         success: false,
@@ -783,12 +1207,13 @@ router.post('/:id/interviews', async (req, res) => {
       });
     }
 
-    // Check if user is assigned to this candidate, is the recruiter, or is HR/Admin
+    // Check if user is assigned to this candidate, is the recruiter, is the team lead, or is HR/Admin
     const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
     const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isTeamLead = candidate.teamLead?.toString() === employee._id.toString();
     const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
     
-    if (!isAssigned && !isRecruiter && !isHRorAdmin) {
+    if (!isAssigned && !isRecruiter && !isTeamLead && !isHRorAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to schedule interviews for this candidate'
@@ -845,9 +1270,9 @@ router.put('/:id/interviews/:interviewId', async (req, res) => {
       });
     }
 
-    // Validate interview date is not in the past
+    // Validate interview date is not in the past (US Central Time)
     const selectedDate = new Date(scheduledDate);
-    const now = new Date();
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     if (selectedDate < now) {
       return res.status(400).json({
         success: false,
@@ -875,11 +1300,13 @@ router.put('/:id/interviews/:interviewId', async (req, res) => {
       });
     }
 
-    // Check if user is assigned to this candidate or is HR/Admin
+    // Check if user is assigned to this candidate, is the recruiter, is the team lead, or is HR/Admin
     const isAssigned = candidate.assignedTo?.toString() === employee._id.toString();
+    const isRecruiter = candidate.recruiter?.toString() === employee._id.toString();
+    const isTeamLead = candidate.teamLead?.toString() === employee._id.toString();
     const isHRorAdmin = ['hr', 'admin'].includes(req.user.role);
     
-    if (!isAssigned && !isHRorAdmin) {
+    if (!isAssigned && !isRecruiter && !isTeamLead && !isHRorAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update interviews for this candidate'
@@ -2055,9 +2482,9 @@ router.post('/:id/submissions', async (req, res) => {
   try {
     const { submissionDate, submissionNumber } = req.body;
 
-    // Validate submission date is not in the future
+    // Validate submission date is not in the future (US Central Time)
     const selectedDate = new Date(submissionDate);
-    const today = new Date();
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
     
     if (selectedDate > today) {
@@ -2147,9 +2574,9 @@ router.put('/:id/submissions/:submissionId', async (req, res) => {
   try {
     const { submissionDate, submissionNumber } = req.body;
 
-    // Validate submission date is not in the future
+    // Validate submission date is not in the future (US Central Time)
     const selectedDate = new Date(submissionDate);
-    const today = new Date();
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
     today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
     
     if (selectedDate > today) {
@@ -2304,15 +2731,25 @@ router.get('/submissions/dashboard', async (req, res) => {
     // Build filter based on employee selection
     const filter = { isDeleted: { $ne: true } };
     
-    // If specific employee is selected, filter by assignedTo
+    // If specific employee is selected, check if they are a Team Lead
     if (employeeId && employeeId !== 'all') {
-      filter.assignedTo = employeeId;
+      const employee = await Employee.findById(employeeId).select('designation');
+      const isTeamLead = employee && employee.designation && /team lead|team leader/i.test(employee.designation);
+      
+      if (isTeamLead) {
+        // For Team Leads: get candidates assigned to them as Team Lead
+        filter.teamLead = employeeId;
+      } else {
+        // For Recruiters: get candidates assigned to them as Recruiter
+        filter.assignedTo = employeeId;
+      }
     }
     
     // Get all candidates with their submissions
     const candidates = await Candidate.find(filter)
       .populate('assignedTo', 'firstName lastName designation')
-      .select('firstName lastName assignedTo submissions');
+      .populate('teamLead', 'firstName lastName designation')
+      .select('firstName lastName assignedTo teamLead submissions');
     
     // Initialize monthly data structure
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -2360,15 +2797,25 @@ router.get('/job-offers/dashboard', async (req, res) => {
     // Build filter based on employee selection
     const filter = { isDeleted: { $ne: true } };
     
-    // If specific employee is selected, filter by assignedTo
+    // If specific employee is selected, check if they are a Team Lead
     if (employeeId && employeeId !== 'all') {
-      filter.assignedTo = employeeId;
+      const employee = await Employee.findById(employeeId).select('designation');
+      const isTeamLead = employee && employee.designation && /team lead|team leader/i.test(employee.designation);
+      
+      if (isTeamLead) {
+        // For Team Leads: get candidates assigned to them as Team Lead
+        filter.teamLead = employeeId;
+      } else {
+        // For Recruiters: get candidates assigned to them as Recruiter
+        filter.assignedTo = employeeId;
+      }
     }
     
     // Get all candidates with their offer details
     const candidates = await Candidate.find(filter)
       .populate('assignedTo', 'firstName lastName designation')
-      .select('firstName lastName assignedTo offerDetails');
+      .populate('teamLead', 'firstName lastName designation')
+      .select('firstName lastName assignedTo teamLead offerDetails');
     
     // Initialize monthly data structure
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -2415,15 +2862,25 @@ router.get('/interview-schedules/dashboard', async (req, res) => {
     // Build filter based on employee selection
     const filter = { isDeleted: { $ne: true } };
     
-    // If specific employee is selected, filter by assignedTo
+    // If specific employee is selected, check if they are a Team Lead
     if (employeeId && employeeId !== 'all') {
-      filter.assignedTo = employeeId;
+      const employee = await Employee.findById(employeeId).select('designation');
+      const isTeamLead = employee && employee.designation && /team lead|team leader/i.test(employee.designation);
+      
+      if (isTeamLead) {
+        // For Team Leads: get candidates assigned to them as Team Lead
+        filter.teamLead = employeeId;
+      } else {
+        // For Recruiters: get candidates assigned to them as Recruiter
+        filter.assignedTo = employeeId;
+      }
     }
     
     // Get all candidates with their interviews
     const candidates = await Candidate.find(filter)
       .populate('assignedTo', 'firstName lastName designation')
-      .select('firstName lastName assignedTo interviews');
+      .populate('teamLead', 'firstName lastName designation')
+      .select('firstName lastName assignedTo teamLead interviews');
     
     // Initialize monthly data structure
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -3497,8 +3954,8 @@ router.get('/interviews/dashboard', async (req, res) => {
     // Sort by scheduled date
     upcomingInterviews.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
     
-    // Limit to 5 upcoming interviews for dashboard
-    const dashboardInterviews = upcomingInterviews.slice(0, 5);
+    // Limit to 3 upcoming interviews for dashboard
+    const dashboardInterviews = upcomingInterviews.slice(0, 3);
     
     res.json({
       success: true,
@@ -3514,5 +3971,6 @@ router.get('/interviews/dashboard', async (req, res) => {
     });
   }
 });
+
 
 module.exports = router; 

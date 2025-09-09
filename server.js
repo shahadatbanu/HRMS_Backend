@@ -18,6 +18,7 @@ const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
 const performanceSettingsRoutes = require('./routes/performanceSettings.js');
+const teamLeadsRoutes = require('./routes/teamLeads.js');
 
 
 dotenv.config();
@@ -80,6 +81,9 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 
 // Employee routes
 app.use('/api/employees', employeesRoutes);
+
+// Team leads routes
+app.use('/api/employees', teamLeadsRoutes);
 
 // Candidate routes
 app.use('/api/candidates', candidatesRoutes);
