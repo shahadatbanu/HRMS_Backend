@@ -331,12 +331,12 @@ router.post('/checkin', auth, async (req, res) => {
           geolocation.longitude
         );
         
-        if (distance > maxDistance) {
-          return res.status(400).json({ 
-            success: false, 
-            message: `You are too far from the office. Distance: ${Math.round(distance)}m (max: ${maxDistance}m)` 
-          });
-        }
+        // if (distance > maxDistance) {
+        //   return res.status(400).json({ 
+        //     success: false, 
+        //     message: `You are too far from the office. Distance: ${Math.round(distance)}m (max: ${maxDistance}m)` 
+        //   });
+        // }
       }
     }
     
