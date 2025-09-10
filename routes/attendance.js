@@ -5,6 +5,7 @@ const auth = require('../middleware/auth.js');
 const role = require('../middleware/role.js');
 const ActivityService = require('../services/activityService.js');
 const { getCurrentUSCentralTime, getStartOfDayUSCentral, getEndOfDayUSCentral } = require('../utils/timezoneUtils.js');
+const { timezoneUtils } = require('../config/timezone.js');
 
 const router = express.Router();
 
@@ -283,9 +284,9 @@ router.post('/checkin', auth, async (req, res) => {
     }
     
     // Check if already checked in today (US Central Time)
-    const today = getStartOfDayUSCentral(getCurrentUSCentralTime());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const today = timezoneUtils.getStartOfDay();
+    const tomorrow = timezoneUtils.getEndOfDay();
+    tomorrow.setMilliseconds(tomorrow.getMilliseconds() + 1);
     
     const existingAttendance = await Attendance.findOne({
       employeeId,
@@ -339,10 +340,10 @@ router.post('/checkin', auth, async (req, res) => {
       }
     }
     
-    // Calculate if late (assuming 9 AM start time)
-    const checkInTime = new Date();
-    const startTime = new Date();
-    startTime.setHours(9, 0, 0, 0);
+    // Calculate if late (using US Central Time)
+    const checkInTime = timezoneUtils.getCurrentTime();
+    const startTime = new Date(today);
+    startTime.setHours(9, 0, 0, 0); // 9 AM US Central Time
     
     let status = 'Present';
     let lateMinutes = 0;
@@ -351,6 +352,10 @@ router.post('/checkin', auth, async (req, res) => {
       status = 'Late';
       lateMinutes = Math.floor((checkInTime - startTime) / (1000 * 60));
     }
+    
+    console.log(`🕐 Check-in time (US Central): ${timezoneUtils.formatDateTime(checkInTime)}`);
+    console.log(`🕐 Start time (US Central): ${timezoneUtils.formatDateTime(startTime)}`);
+    console.log(`📊 Status: ${status}, Late minutes: ${lateMinutes}`);
     
     const attendance = new Attendance({
       employeeId,
@@ -468,7 +473,9 @@ router.post('/checkout', auth, async (req, res) => {
       };
     }
     
-    const checkOutTime = new Date();
+    const checkOutTime = timezoneUtils.getCurrentTime();
+    
+    console.log(`🕐 Check-out time (US Central): ${timezoneUtils.formatDateTime(checkOutTime)}`);
     
     // Calculate working hours
     const checkInTime = attendance.checkIn.time;
