@@ -4,7 +4,7 @@ const Employee = require('../models/Employee.js');
 const auth = require('../middleware/auth.js');
 const role = require('../middleware/role.js');
 const ActivityService = require('../services/activityService.js');
-const { getCurrentUSCentralTime, getStartOfDayUSCentral, getEndOfDayUSCentral } = require('../utils/timezoneUtils.js');
+const { getCurrentISTTime, getStartOfDayIST, getEndOfDayIST } = require('../utils/timezoneUtils.js');
 const { timezoneUtils } = require('../config/timezone.js');
 
 const router = express.Router();
@@ -117,7 +117,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
     // Format the attendance records
     const formattedRecords = attendanceRecords.map(record => {
       const formattedDate = record.date.toLocaleDateString('en-US', { 
-        timeZone: 'America/Chicago',
+        timeZone: 'Asia/Kolkata',
         year: 'numeric', 
         month: 'short', 
         day: '2-digit' 
@@ -125,7 +125,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
       
       const formattedCheckIn = record.checkIn && record.checkIn.time 
         ? new Date(record.checkIn.time).toLocaleTimeString('en-US', { 
-            timeZone: 'America/Chicago',
+            timeZone: 'Asia/Kolkata',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
@@ -134,7 +134,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
       
       const formattedCheckOut = record.checkOut && record.checkOut.time 
         ? new Date(record.checkOut.time).toLocaleTimeString('en-US', { 
-            timeZone: 'America/Chicago',
+            timeZone: 'Asia/Kolkata',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
@@ -206,9 +206,9 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
       });
     }
 
-    // Format the attendance record (US Central Time)
+    // Format the attendance record (IST)
     const formattedDate = todayAttendance.date.toLocaleDateString('en-US', { 
-      timeZone: 'America/Chicago',
+      timeZone: 'Asia/Kolkata',
       year: 'numeric', 
       month: 'short', 
       day: '2-digit' 
@@ -216,7 +216,7 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
     
     const formattedCheckIn = todayAttendance.checkIn && todayAttendance.checkIn.time 
       ? new Date(todayAttendance.checkIn.time).toLocaleTimeString('en-US', { 
-          timeZone: 'America/Chicago',
+          timeZone: 'Asia/Kolkata',
           hour: '2-digit', 
           minute: '2-digit',
           hour12: true 
@@ -225,7 +225,7 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
     
     const formattedCheckOut = todayAttendance.checkOut && todayAttendance.checkOut.time 
       ? new Date(todayAttendance.checkOut.time).toLocaleTimeString('en-US', { 
-          timeZone: 'America/Chicago',
+          timeZone: 'Asia/Kolkata',
           hour: '2-digit', 
           minute: '2-digit',
           hour12: true 
@@ -340,10 +340,10 @@ router.post('/checkin', auth, async (req, res) => {
       }
     }
     
-    // Calculate if late (using US Central Time)
+    // Calculate if late (using IST)
     const checkInTime = timezoneUtils.getCurrentTime();
     const startTime = new Date(today);
-    startTime.setHours(9, 0, 0, 0); // 9 AM US Central Time
+    startTime.setHours(9, 0, 0, 0); // 9 AM IST
     
     let status = 'Present';
     let lateMinutes = 0;
@@ -353,8 +353,8 @@ router.post('/checkin', auth, async (req, res) => {
       lateMinutes = Math.floor((checkInTime - startTime) / (1000 * 60));
     }
     
-    console.log(`🕐 Check-in time (US Central): ${timezoneUtils.formatDateTime(checkInTime)}`);
-    console.log(`🕐 Start time (US Central): ${timezoneUtils.formatDateTime(startTime)}`);
+    console.log(`🕐 Check-in time (IST): ${timezoneUtils.formatDateTime(checkInTime)}`);
+    console.log(`🕐 Start time (IST): ${timezoneUtils.formatDateTime(startTime)}`);
     console.log(`📊 Status: ${status}, Late minutes: ${lateMinutes}`);
     
     const attendance = new Attendance({

@@ -190,16 +190,16 @@ async function markAbsencesForToday() {
       return { marked: 0, skipped: 0, reason: 'Feature disabled' };
     }
     
-    // Use US Central Time for all date calculations
+    // Use IST for all date calculations
     const now = timezoneUtils.getCurrentTime();
     const today = timezoneUtils.getStartOfDay();
     const tomorrow = timezoneUtils.getEndOfDay();
     tomorrow.setMilliseconds(tomorrow.getMilliseconds() + 1); // Add 1ms to get start of next day
     
-    console.log(`🕐 Current US Central Time: ${timezoneUtils.formatDateTime(now)}`);
-    console.log(`📅 Today (US Central): ${timezoneUtils.formatDate(today)}`);
+    console.log(`🕐 Current IST: ${timezoneUtils.formatDateTime(now)}`);
+    console.log(`📅 Today (IST): ${timezoneUtils.formatDate(today)}`);
     
-    // Check if today is Sunday (in US Central Time)
+    // Check if today is Sunday (in IST)
     if (today.getDay() === 0) {
       console.log('⏸️ Today is Sunday. Skipping absence marking.');
       return { marked: 0, skipped: 0, reason: 'Sunday' };
@@ -212,14 +212,14 @@ async function markAbsencesForToday() {
       return { marked: 0, skipped: 0, reason: 'Holiday' };
     }
     
-    // Parse absence marking time and create it in US Central Time
+    // Parse absence marking time and create it in IST
     const [absenceHour, absenceMinute] = settings.absenceMarkingTime.split(':').map(Number);
     const absenceTime = new Date(today);
     absenceTime.setHours(absenceHour, absenceMinute, 0, 0);
     
-    console.log(`⏰ Absence marking time (US Central): ${timezoneUtils.formatDateTime(absenceTime)}`);
+    console.log(`⏰ Absence marking time (IST): ${timezoneUtils.formatDateTime(absenceTime)}`);
     
-    // Check if it's past the absence marking time (in US Central Time)
+    // Check if it's past the absence marking time (in IST)
     if (now < absenceTime) {
       console.log('⏰ Not yet time to mark absences');
       return { marked: 0, skipped: 0, reason: 'Before marking time' };
