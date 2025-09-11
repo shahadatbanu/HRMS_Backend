@@ -51,14 +51,39 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
     
     // Parse date fields from DD-MM-YYYY format to Date objects
     const parseDate = (dateString) => {
-      if (!dateString) return null;
-      const [day, month, year] = dateString.split('-');
-      const parsedDate = new Date(year, month - 1, day); // month is 0-indexed in Date constructor
+      if (!dateString || dateString.trim() === '') return null;
       
-      // Validate the date
-      if (isNaN(parsedDate.getTime())) {
+      // Check if the date string matches DD-MM-YYYY format
+      const dateRegex = /^(\d{2})-(\d{2})-(\d{4})$/;
+      const match = dateString.match(dateRegex);
+      
+      if (!match) {
+        console.log('Date format validation failed for:', dateString);
         return null;
       }
+      
+      const [, day, month, year] = match;
+      const dayNum = parseInt(day, 10);
+      const monthNum = parseInt(month, 10);
+      const yearNum = parseInt(year, 10);
+      
+      // Validate day, month, year ranges
+      if (dayNum < 1 || dayNum > 31 || monthNum < 1 || monthNum > 12 || yearNum < 1900 || yearNum > 2100) {
+        console.log('Date range validation failed for:', dateString);
+        return null;
+      }
+      
+      const parsedDate = new Date(yearNum, monthNum - 1, dayNum); // month is 0-indexed in Date constructor
+      
+      // Validate the date (check if it's a valid date and matches input)
+      if (isNaN(parsedDate.getTime()) || 
+          parsedDate.getDate() !== dayNum || 
+          parsedDate.getMonth() !== (monthNum - 1) || 
+          parsedDate.getFullYear() !== yearNum) {
+        console.log('Date validation failed for:', dateString);
+        return null;
+      }
+      
       return parsedDate;
     };
 
@@ -233,14 +258,39 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
     
     // Parse date fields from DD-MM-YYYY format to Date objects
     const parseDate = (dateString) => {
-      if (!dateString) return null;
-      const [day, month, year] = dateString.split('-');
-      const parsedDate = new Date(year, month - 1, day); // month is 0-indexed in Date constructor
+      if (!dateString || dateString.trim() === '') return null;
       
-      // Validate the date
-      if (isNaN(parsedDate.getTime())) {
+      // Check if the date string matches DD-MM-YYYY format
+      const dateRegex = /^(\d{2})-(\d{2})-(\d{4})$/;
+      const match = dateString.match(dateRegex);
+      
+      if (!match) {
+        console.log('Date format validation failed for:', dateString);
         return null;
       }
+      
+      const [, day, month, year] = match;
+      const dayNum = parseInt(day, 10);
+      const monthNum = parseInt(month, 10);
+      const yearNum = parseInt(year, 10);
+      
+      // Validate day, month, year ranges
+      if (dayNum < 1 || dayNum > 31 || monthNum < 1 || monthNum > 12 || yearNum < 1900 || yearNum > 2100) {
+        console.log('Date range validation failed for:', dateString);
+        return null;
+      }
+      
+      const parsedDate = new Date(yearNum, monthNum - 1, dayNum); // month is 0-indexed in Date constructor
+      
+      // Validate the date (check if it's a valid date and matches input)
+      if (isNaN(parsedDate.getTime()) || 
+          parsedDate.getDate() !== dayNum || 
+          parsedDate.getMonth() !== (monthNum - 1) || 
+          parsedDate.getFullYear() !== yearNum) {
+        console.log('Date validation failed for:', dateString);
+        return null;
+      }
+      
       return parsedDate;
     };
 
