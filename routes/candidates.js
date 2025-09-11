@@ -317,6 +317,7 @@ router.get('/', async (req, res) => {
 
     const filter = {};
 
+
     // Role-based filtering
     // If user is employee, only show candidates assigned to them
     if (req.user && req.user.role === 'employee') {
@@ -362,13 +363,13 @@ router.get('/', async (req, res) => {
     // Experience filter
     if (experience) {
       if (experience === '0-2') {
-        filter.yearsOfExperience = { $gte: 0, $lte: 2 };
+        filter.yearsOfExperience = { $gte: 0, $lte: 2, $exists: true, $ne: null };
       } else if (experience === '3-5') {
-        filter.yearsOfExperience = { $gte: 3, $lte: 5 };
+        filter.yearsOfExperience = { $gte: 3, $lte: 5, $exists: true, $ne: null };
       } else if (experience === '6-10') {
-        filter.yearsOfExperience = { $gte: 6, $lte: 10 };
+        filter.yearsOfExperience = { $gte: 6, $lte: 10, $exists: true, $ne: null };
       } else if (experience === '10+') {
-        filter.yearsOfExperience = { $gte: 10 };
+        filter.yearsOfExperience = { $gte: 10, $exists: true, $ne: null };
       }
     }
 
@@ -1192,7 +1193,7 @@ router.post('/:id/interviews', async (req, res) => {
 
     // Validate interview date is not in the past (US Central Time)
     const selectedDate = new Date(scheduledDate);
-    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     if (selectedDate < now) {
       return res.status(400).json({
         success: false,
@@ -1285,7 +1286,7 @@ router.put('/:id/interviews/:interviewId', async (req, res) => {
 
     // Validate interview date is not in the past (US Central Time)
     const selectedDate = new Date(scheduledDate);
-    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     if (selectedDate < now) {
       return res.status(400).json({
         success: false,
@@ -2497,7 +2498,7 @@ router.post('/:id/submissions', async (req, res) => {
 
     // Validate submission date is not in the future (US Central Time)
     const selectedDate = new Date(submissionDate);
-    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
     
     if (selectedDate > today) {
@@ -2589,7 +2590,7 @@ router.put('/:id/submissions/:submissionId', async (req, res) => {
 
     // Validate submission date is not in the future (US Central Time)
     const selectedDate = new Date(submissionDate);
-    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     today.setHours(23, 59, 59, 999); // Set to end of today to allow today's date
     
     if (selectedDate > today) {
