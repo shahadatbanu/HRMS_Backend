@@ -310,4 +310,4 @@ async function markAbsencesForToday() {
   }
 }
 
-module.exports = router;
+module.exports = { router, markAbsencesForToday };
