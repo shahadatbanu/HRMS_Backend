@@ -317,6 +317,7 @@ router.get('/', async (req, res) => {
 
     const filter = {};
 
+
     // Role-based filtering
     // If user is employee, only show candidates assigned to them
     if (req.user && req.user.role === 'employee') {
@@ -362,13 +363,13 @@ router.get('/', async (req, res) => {
     // Experience filter
     if (experience) {
       if (experience === '0-2') {
-        filter.yearsOfExperience = { $gte: 0, $lte: 2 };
+        filter.yearsOfExperience = { $gte: 0, $lte: 2, $exists: true, $ne: null };
       } else if (experience === '3-5') {
-        filter.yearsOfExperience = { $gte: 3, $lte: 5 };
+        filter.yearsOfExperience = { $gte: 3, $lte: 5, $exists: true, $ne: null };
       } else if (experience === '6-10') {
-        filter.yearsOfExperience = { $gte: 6, $lte: 10 };
+        filter.yearsOfExperience = { $gte: 6, $lte: 10, $exists: true, $ne: null };
       } else if (experience === '10+') {
-        filter.yearsOfExperience = { $gte: 10 };
+        filter.yearsOfExperience = { $gte: 10, $exists: true, $ne: null };
       }
     }
 
