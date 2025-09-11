@@ -7,10 +7,10 @@ const attendanceSettingsSchema = new mongoose.Schema({
     default: true
   },
   
-  // Time by which employees must check in (in 24-hour format, US Central Time)
+  // Time by which employees must check in (in 24-hour format, IST)
   absenceMarkingTime: {
     type: String,
-    default: '12:00', // 12:00 PM Central Time
+    default: '12:00', // 12:00 PM IST
     validate: {
       validator: function(v) {
         // Validate time format (HH:MM)
@@ -20,11 +20,11 @@ const attendanceSettingsSchema = new mongoose.Schema({
     }
   },
   
-  // Working hours configuration (US Central Time)
+  // Working hours configuration (IST)
   workingHours: {
     startTime: {
       type: String,
-      default: '09:00', // 9:00 AM Central Time
+      default: '09:00', // 9:00 AM IST
       validate: {
         validator: function(v) {
           return /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
@@ -34,7 +34,7 @@ const attendanceSettingsSchema = new mongoose.Schema({
     },
     endTime: {
       type: String,
-      default: '18:00', // 6:00 PM Central Time
+      default: '18:00', // 6:00 PM IST
       validate: {
         validator: function(v) {
           return /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
