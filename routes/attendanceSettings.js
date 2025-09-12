@@ -178,6 +178,87 @@ router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
   }
 });
 
+// Get cron service status
+router.get('/cron-status', auth, role(['admin', 'hr']), async (req, res) => {
+  try {
+    console.log('🔍 GET /attendance-settings/cron-status - User:', req.user);
+    
+    const cronStatus = await cronService.getDetailedStatus();
+    
+    console.log('📊 Cron Status Response:', JSON.stringify(cronStatus, null, 2));
+    
+    res.json({
+      success: true,
+      data: cronStatus
+    });
+  } catch (error) {
+    console.error('Error fetching cron status:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Restart cron service
+router.post('/cron-restart', auth, role(['admin', 'hr']), async (req, res) => {
+  try {
+    console.log('🔍 POST /attendance-settings/cron-restart - User:', req.user);
+    
+    // Stop current cron service
+    cronService.stop();
+    
+    // Reinitialize
+    await cronService.initialize();
+    
+    const newStatus = await cronService.getDetailedStatus();
+    
+    res.json({
+      success: true,
+      message: 'Cron service restarted successfully',
+      data: newStatus
+    });
+  } catch (error) {
+    console.error('Error restarting cron service:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Get cron service logs (recent runs)
+router.get('/cron-logs', auth, role(['admin', 'hr']), async (req, res) => {
+  try {
+    console.log('🔍 GET /attendance-settings/cron-logs - User:', req.user);
+    
+    const { limit = 10 } = req.query;
+    
+    // Get recent attendance records that were automatically marked as absent
+    const recentAbsences = await Attendance.find({
+      status: 'Absent',
+      notes: { $regex: /Automatically marked absent/ },
+      isActive: true
+    })
+    .populate('employeeId', 'firstName lastName email department')
+    .sort({ createdAt: -1 })
+    .limit(parseInt(limit));
+    
+    const logs = recentAbsences.map(record => ({
+      id: record._id,
+      employeeName: `${record.employeeId.firstName} ${record.employeeId.lastName}`,
+      date: record.date,
+      markedAt: record.createdAt,
+      notes: record.notes
+    }));
+    
+    res.json({
+      success: true,
+      data: {
+        logs,
+        total: logs.length
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching cron logs:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // Function to mark absences for today
 async function markAbsencesForToday() {
   try {
