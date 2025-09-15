@@ -7,7 +7,7 @@ const employeesRoutes = require('./routes/employees.js');
 const candidatesRoutes = require('./routes/candidates.js');
 const reportsRoutes = require('./routes/reports.js');
 const attendanceRoutes = require('./routes/attendance.js');
-const attendanceSettingsRoutes = require('./routes/attendanceSettings.js');
+const { router: attendanceSettingsRoutes } = require('./routes/attendanceSettings.js');
 const cronService = require('./services/cronService.js');
 const path = require('path');
 const holidaysRoutes = require('./routes/holidays.js');
@@ -18,6 +18,7 @@ const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
 const performanceSettingsRoutes = require('./routes/performanceSettings.js');
+const teamLeadsRoutes = require('./routes/teamLeads.js');
 
 
 dotenv.config();
@@ -80,6 +81,9 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 
 // Employee routes
 app.use('/api/employees', employeesRoutes);
+
+// Team leads routes
+app.use('/api/employees', teamLeadsRoutes);
 
 // Candidate routes
 app.use('/api/candidates', candidatesRoutes);

@@ -4,6 +4,8 @@ const Employee = require('../models/Employee.js');
 const auth = require('../middleware/auth.js');
 const role = require('../middleware/role.js');
 const ActivityService = require('../services/activityService.js');
+const { getCurrentISTTime, getStartOfDayIST, getEndOfDayIST } = require('../utils/timezoneUtils.js');
+const { timezoneUtils } = require('../config/timezone.js');
 
 const router = express.Router();
 
@@ -115,6 +117,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
     // Format the attendance records
     const formattedRecords = attendanceRecords.map(record => {
       const formattedDate = record.date.toLocaleDateString('en-US', { 
+        timeZone: 'Asia/Kolkata',
         year: 'numeric', 
         month: 'short', 
         day: '2-digit' 
@@ -122,6 +125,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
       
       const formattedCheckIn = record.checkIn && record.checkIn.time 
         ? new Date(record.checkIn.time).toLocaleTimeString('en-US', { 
+            timeZone: 'Asia/Kolkata',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
@@ -130,6 +134,7 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
       
       const formattedCheckOut = record.checkOut && record.checkOut.time 
         ? new Date(record.checkOut.time).toLocaleTimeString('en-US', { 
+            timeZone: 'Asia/Kolkata',
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
@@ -201,8 +206,9 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
       });
     }
 
-    // Format the attendance record
+    // Format the attendance record (IST)
     const formattedDate = todayAttendance.date.toLocaleDateString('en-US', { 
+      timeZone: 'Asia/Kolkata',
       year: 'numeric', 
       month: 'short', 
       day: '2-digit' 
@@ -210,6 +216,7 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
     
     const formattedCheckIn = todayAttendance.checkIn && todayAttendance.checkIn.time 
       ? new Date(todayAttendance.checkIn.time).toLocaleTimeString('en-US', { 
+          timeZone: 'Asia/Kolkata',
           hour: '2-digit', 
           minute: '2-digit',
           hour12: true 
@@ -218,6 +225,7 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
     
     const formattedCheckOut = todayAttendance.checkOut && todayAttendance.checkOut.time 
       ? new Date(todayAttendance.checkOut.time).toLocaleTimeString('en-US', { 
+          timeZone: 'Asia/Kolkata',
           hour: '2-digit', 
           minute: '2-digit',
           hour12: true 
@@ -275,11 +283,10 @@ router.post('/checkin', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
     
-    // Check if already checked in today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Check if already checked in today (US Central Time)
+    const today = timezoneUtils.getStartOfDay();
+    const tomorrow = timezoneUtils.getEndOfDay();
+    tomorrow.setMilliseconds(tomorrow.getMilliseconds() + 1);
     
     const existingAttendance = await Attendance.findOne({
       employeeId,
@@ -324,19 +331,19 @@ router.post('/checkin', auth, async (req, res) => {
           geolocation.longitude
         );
         
-        if (distance > maxDistance) {
-          return res.status(400).json({ 
-            success: false, 
-            message: `You are too far from the office. Distance: ${Math.round(distance)}m (max: ${maxDistance}m)` 
-          });
-        }
+        // if (distance > maxDistance) {
+        //   return res.status(400).json({ 
+        //     success: false, 
+        //     message: `You are too far from the office. Distance: ${Math.round(distance)}m (max: ${maxDistance}m)` 
+        //   });
+        // }
       }
     }
     
-    // Calculate if late (assuming 9 AM start time)
-    const checkInTime = new Date();
-    const startTime = new Date();
-    startTime.setHours(9, 0, 0, 0);
+    // Calculate if late (using IST)
+    const checkInTime = timezoneUtils.getCurrentTime();
+    const startTime = new Date(today);
+    startTime.setHours(9, 0, 0, 0); // 9 AM IST
     
     let status = 'Present';
     let lateMinutes = 0;
@@ -345,6 +352,10 @@ router.post('/checkin', auth, async (req, res) => {
       status = 'Late';
       lateMinutes = Math.floor((checkInTime - startTime) / (1000 * 60));
     }
+    
+    console.log(`🕐 Check-in time (IST): ${timezoneUtils.formatDateTime(checkInTime)}`);
+    console.log(`🕐 Start time (IST): ${timezoneUtils.formatDateTime(startTime)}`);
+    console.log(`📊 Status: ${status}, Late minutes: ${lateMinutes}`);
     
     const attendance = new Attendance({
       employeeId,
@@ -462,7 +473,9 @@ router.post('/checkout', auth, async (req, res) => {
       };
     }
     
-    const checkOutTime = new Date();
+    const checkOutTime = timezoneUtils.getCurrentTime();
+    
+    console.log(`🕐 Check-out time (US Central): ${timezoneUtils.formatDateTime(checkOutTime)}`);
     
     // Calculate working hours
     const checkInTime = attendance.checkIn.time;

@@ -7,6 +7,7 @@ const role = require('../middleware/role.js');
 const cronService = require('../services/cronService.js');
 const Holiday = require('../models/Holiday.js');
 const Leave = require('../models/Leave.js');
+const { timezoneUtils } = require('../config/timezone.js');
 
 const router = express.Router();
 
@@ -189,12 +190,16 @@ async function markAbsencesForToday() {
       return { marked: 0, skipped: 0, reason: 'Feature disabled' };
     }
     
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Use IST for all date calculations
+    const now = timezoneUtils.getCurrentTime();
+    const today = timezoneUtils.getStartOfDay();
+    const tomorrow = timezoneUtils.getEndOfDay();
+    tomorrow.setMilliseconds(tomorrow.getMilliseconds() + 1); // Add 1ms to get start of next day
     
-    // Check if today is Sunday
+    console.log(`🕐 Current IST: ${timezoneUtils.formatDateTime(now)}`);
+    console.log(`📅 Today (IST): ${timezoneUtils.formatDate(today)}`);
+    
+    // Check if today is Sunday (in IST)
     if (today.getDay() === 0) {
       console.log('⏸️ Today is Sunday. Skipping absence marking.');
       return { marked: 0, skipped: 0, reason: 'Sunday' };
@@ -207,21 +212,32 @@ async function markAbsencesForToday() {
       return { marked: 0, skipped: 0, reason: 'Holiday' };
     }
     
-    // Parse absence marking time
+    // Parse absence marking time and create it in IST
     const [absenceHour, absenceMinute] = settings.absenceMarkingTime.split(':').map(Number);
     const absenceTime = new Date(today);
     absenceTime.setHours(absenceHour, absenceMinute, 0, 0);
     
-    // Check if it's past the absence marking time
-    const now = new Date();
+    console.log(`⏰ Absence marking time (IST): ${timezoneUtils.formatDateTime(absenceTime)}`);
+    
+    // Check if it's past the absence marking time (in IST)
     if (now < absenceTime) {
       console.log('⏰ Not yet time to mark absences');
       return { marked: 0, skipped: 0, reason: 'Before marking time' };
     }
     
-    // Get all active employees
-    const employees = await Employee.find({ isActive: true });
-    console.log(`👥 Found ${employees.length} active employees`);
+    // Get all active employees (excluding admins)
+    const employees = await Employee.find({ 
+      isActive: true, 
+      role: { $ne: 'admin' } 
+    });
+    
+    // Get count of admin users for logging
+    const adminCount = await Employee.countDocuments({ 
+      isActive: true, 
+      role: 'admin' 
+    });
+    
+    console.log(`👥 Found ${employees.length} active employees (excluding ${adminCount} admins)`);
     
     let markedCount = 0;
     let skippedCount = 0;
@@ -263,7 +279,7 @@ async function markAbsencesForToday() {
           employeeId: employee._id,
           date: today,
           status: 'Absent',
-          notes: `Automatically marked absent - no check-in by ${settings.formattedAbsenceMarkingTime}`,
+          notes: `Automatically marked absent - no check-in by ${settings.formattedAbsenceMarkingTime} (US Central Time)`,
           isActive: true
         });
         
@@ -278,12 +294,14 @@ async function markAbsencesForToday() {
     }
     
     console.log(`✅ Absence marking completed: ${markedCount} marked, ${skippedCount} skipped`);
+    console.log(`🕐 Marked at US Central Time: ${timezoneUtils.formatDateTime(now)}`);
     
     return {
       marked: markedCount,
       skipped: skippedCount,
       totalEmployees: employees.length,
-      markedTime: now.toISOString()
+      markedTime: now.toISOString(),
+      markedTimeCentral: timezoneUtils.formatDateTime(now)
     };
     
   } catch (error) {
@@ -292,4 +310,4 @@ async function markAbsencesForToday() {
   }
 }
 
-module.exports = router;
+module.exports = { router, markAbsencesForToday };

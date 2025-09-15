@@ -83,6 +83,7 @@ const CandidateSchema = new mongoose.Schema({
   assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // HR who assigned
   assignedDate: { type: Date },
   recruiter: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // Recruiter assigned to candidate
+  teamLead: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // Team Lead assigned to candidate
   
   // Application Details
   appliedRole: { type: String },
