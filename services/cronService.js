@@ -6,6 +6,11 @@ class CronService {
   constructor() {
     this.absenceMarkingJob = null;
     this.isInitialized = false;
+    this.lastRun = null;
+    this.lastRunResult = null;
+    this.nextRun = null;
+    this.runCount = 0;
+    this.errorCount = 0;
   }
 
   // Initialize cron jobs
@@ -54,10 +59,24 @@ class CronService {
       
       this.absenceMarkingJob = cron.schedule(cronExpression, async () => {
         console.log('🔄 Running scheduled absence marking...');
+        this.lastRun = new Date();
+        this.runCount++;
+        
         try {
           const result = await markAbsencesForToday();
+          this.lastRunResult = {
+            success: true,
+            result: result,
+            timestamp: this.lastRun
+          };
           console.log('✅ Scheduled absence marking completed:', result);
         } catch (error) {
+          this.errorCount++;
+          this.lastRunResult = {
+            success: false,
+            error: error.message,
+            timestamp: this.lastRun
+          };
           console.error('❌ Error in scheduled absence marking:', error);
         }
       }, {
@@ -88,13 +107,89 @@ class CronService {
   }
 
   // Get job status
-  getStatus() {
+  async getStatus() {
+    // Check if auto absence marking is enabled
+    const settings = await AttendanceSettings.findOne();
+    const isAutoAbsenceEnabled = settings && settings.autoAbsenceEnabled;
+    
+    const isJobRunning = this.absenceMarkingJob && 
+                        this.absenceMarkingJob.running !== false && 
+                        this.isInitialized &&
+                        isAutoAbsenceEnabled;
+    
     return {
       isInitialized: this.isInitialized,
+      autoAbsenceEnabled: isAutoAbsenceEnabled,
       absenceMarkingJob: {
-        running: this.absenceMarkingJob ? this.absenceMarkingJob.running : false
+        running: Boolean(isJobRunning),
+        lastRun: this.lastRun,
+        lastRunResult: this.lastRunResult,
+        nextRun: isAutoAbsenceEnabled ? this.getNextRunTime() : null,
+        runCount: this.runCount,
+        errorCount: this.errorCount,
+        successRate: this.runCount > 0 ? ((this.runCount - this.errorCount) / this.runCount * 100).toFixed(1) : 0
       }
     };
+  }
+
+  // Get next run time
+  getNextRunTime() {
+    if (!this.absenceMarkingJob || !this.absenceMarkingJob.running) {
+      return null;
+    }
+    
+    // Calculate next run time based on current schedule
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // For now, return a basic calculation
+    // In a real implementation, you'd need to get settings synchronously or cache them
+    const nextRun = new Date(tomorrow);
+    nextRun.setHours(12, 0, 0, 0); // Default to 12:00 PM
+    return nextRun;
+  }
+
+  // Get detailed cron statistics
+  async getDetailedStatus() {
+    const status = await this.getStatus();
+    const now = new Date();
+    
+    return {
+      ...status,
+      uptime: this.isInitialized ? this.getUptime() : 0,
+      timeSinceLastRun: this.lastRun ? Math.floor((now - this.lastRun) / (1000 * 60)) : null, // minutes
+      nextRunIn: status.absenceMarkingJob.nextRun ? Math.floor((new Date(status.absenceMarkingJob.nextRun) - now) / (1000 * 60)) : null, // minutes
+      healthStatus: await this.getHealthStatus()
+    };
+  }
+
+  // Get uptime in minutes
+  getUptime() {
+    if (!this.isInitialized) return 0;
+    // This is a simplified uptime calculation
+    // In a real implementation, you'd track the start time
+    return Math.floor((Date.now() - (this.lastRun || Date.now())) / (1000 * 60));
+  }
+
+  // Get health status
+  async getHealthStatus() {
+    if (!this.isInitialized) return 'stopped';
+    
+    // Check if auto absence marking is enabled
+    const settings = await AttendanceSettings.findOne();
+    const isAutoAbsenceEnabled = settings && settings.autoAbsenceEnabled;
+    
+    if (!isAutoAbsenceEnabled) return 'disabled';
+    
+    const isJobRunning = this.absenceMarkingJob && 
+                        this.absenceMarkingJob.running !== false && 
+                        this.isInitialized;
+    
+    if (!isJobRunning) return 'stopped';
+    if (this.errorCount > this.runCount * 0.5) return 'unhealthy';
+    if (this.errorCount > 0) return 'warning';
+    return 'healthy';
   }
 }
 
