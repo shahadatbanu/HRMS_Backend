@@ -14,15 +14,18 @@ const router = express.Router();
 // Get auto checkout hours setting (public endpoint for frontend)
 router.get('/auto-checkout-hours', auth, async (req, res) => {
   try {
+    console.log('🔧 GET /attendance-settings/auto-checkout-hours - User:', req.user);
     const settings = await AttendanceSettings.findOne();
     const autoCheckoutHours = settings?.autoCheckoutHours || 16; // Default to 16 hours
+    console.log('🔧 Current settings:', settings);
+    console.log('🔧 Returning autoCheckoutHours:', autoCheckoutHours);
     
     res.json({
       success: true,
       data: { autoCheckoutHours }
     });
   } catch (error) {
-    console.error('Error fetching auto checkout hours:', error);
+    console.error('❌ Error fetching auto checkout hours:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
@@ -56,6 +59,7 @@ router.get('/', auth, role(['admin', 'hr']), async (req, res) => {
 router.put('/', auth, role(['admin', 'hr']), async (req, res) => {
   try {
     console.log('🔍 PUT /attendance-settings - User:', req.user);
+    console.log('🔍 Request body:', req.body);
     
     const {
       autoAbsenceEnabled,
@@ -63,6 +67,7 @@ router.put('/', auth, role(['admin', 'hr']), async (req, res) => {
       workingHours,
       lateThresholdMinutes,
       halfDayThresholdHours,
+      autoCheckoutHours,
       description
     } = req.body;
     
@@ -83,6 +88,10 @@ router.put('/', auth, role(['admin', 'hr']), async (req, res) => {
     }
     if (lateThresholdMinutes !== undefined) settings.lateThresholdMinutes = lateThresholdMinutes;
     if (halfDayThresholdHours !== undefined) settings.halfDayThresholdHours = halfDayThresholdHours;
+    if (autoCheckoutHours !== undefined) {
+      settings.autoCheckoutHours = autoCheckoutHours;
+      console.log('🔧 Updated autoCheckoutHours to:', autoCheckoutHours);
+    }
     if (description) settings.description = description;
     
     settings.updatedBy = req.user._id;
