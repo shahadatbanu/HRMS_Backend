@@ -4,7 +4,7 @@ const Employee = require('../models/Employee.js');
 const auth = require('../middleware/auth.js');
 const role = require('../middleware/role.js');
 const ActivityService = require('../services/activityService.js');
-const { getCurrentISTTime, getStartOfDayIST, getEndOfDayIST } = require('../utils/timezoneUtils.js');
+const { getCurrentISTTime, getStartOfDayIST, getEndOfDayIST, formatToISTTime } = require('../utils/timezoneUtils.js');
 const { timezoneUtils } = require('../config/timezone.js');
 
 const router = express.Router();
@@ -277,28 +277,51 @@ router.post('/checkin', auth, async (req, res) => {
     console.log('🔍 POST /attendance/checkin - User:', req.user, 'EmployeeId:', employeeId);
     console.log('📍 Location data received:', { location, locationName, geolocation });
     
+    // Get today's date in IST
+    const today = getCurrentISTTime();
+    
     // Check if employee exists
     const employee = await Employee.findById(employeeId);
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
     
-    // Check if already checked in today (US Central Time)
-    const today = timezoneUtils.getStartOfDay();
-    const tomorrow = timezoneUtils.getEndOfDay();
-    tomorrow.setMilliseconds(tomorrow.getMilliseconds() + 1);
-    
+    // Check if employee already has unchecked attendance
     const existingAttendance = await Attendance.findOne({
       employeeId,
-      date: {
-        $gte: today,
-        $lt: tomorrow
-      },
+      'checkOut.time': { $exists: false },
       isActive: true
     });
     
     if (existingAttendance) {
-      return res.status(400).json({ success: false, message: 'Already checked in today' });
+      // Get attendance settings for auto checkout hours
+      const AttendanceSettings = require('../models/AttendanceSettings.js');
+      const settings = await AttendanceSettings.findOne();
+      const autoCheckoutHours = settings?.autoCheckoutHours || 16; // Default to 16 hours
+      
+      const checkInTime = existingAttendance.checkIn.time;
+      const now = getCurrentISTTime();
+      const hoursSinceCheckIn = (now - checkInTime) / (1000 * 60 * 60);
+      
+      if (hoursSinceCheckIn >= autoCheckoutHours) {
+        // Auto checkout the old record after configured hours
+        existingAttendance.checkOut = {
+          time: new Date(checkInTime.getTime() + (autoCheckoutHours * 60 * 60 * 1000)),
+          location: 'Auto Checkout',
+          locationName: `System Auto Checkout (${autoCheckoutHours}h limit)`,
+          geolocation: null
+        };
+        existingAttendance.totalWorkingHours = autoCheckoutHours;
+        existingAttendance.notes = `Auto checked out after ${autoCheckoutHours} hours`;
+        await existingAttendance.save();
+        
+        console.log(`✅ Auto checked out old record after ${autoCheckoutHours} hours for ${employeeId}`);
+      } else {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Please check out from previous shift first' 
+        });
+      }
     }
     
     // Validate geolocation if provided
@@ -340,10 +363,18 @@ router.post('/checkin', auth, async (req, res) => {
       }
     }
     
-    // Calculate if late (using IST)
-    const checkInTime = timezoneUtils.getCurrentTime();
+    // Calculate if late (using IST) - Get start time from settings
+    const checkInTime = getCurrentISTTime();
+    
+    // Get attendance settings for working hours
+    const AttendanceSettings = require('../models/AttendanceSettings.js');
+    const settings = await AttendanceSettings.findOne();
+    const workingHoursStart = settings?.workingHours?.startTime || '09:00'; // Default to 9:00 AM
+    
+    // Parse the start time (format: "HH:MM")
+    const [startHour, startMinute] = workingHoursStart.split(':').map(Number);
     const startTime = new Date(today);
-    startTime.setHours(9, 0, 0, 0); // 9 AM IST
+    startTime.setHours(startHour, startMinute, 0, 0);
     
     let status = 'Present';
     let lateMinutes = 0;
@@ -353,8 +384,9 @@ router.post('/checkin', auth, async (req, res) => {
       lateMinutes = Math.floor((checkInTime - startTime) / (1000 * 60));
     }
     
-    console.log(`🕐 Check-in time (IST): ${timezoneUtils.formatDateTime(checkInTime)}`);
-    console.log(`🕐 Start time (IST): ${timezoneUtils.formatDateTime(startTime)}`);
+    console.log(`🕐 Check-in time (IST): ${formatToISTTime(checkInTime)}`);
+    console.log(`🕐 Configured start time: ${workingHoursStart} (IST)`);
+    console.log(`🕐 Start time (IST): ${formatToISTTime(startTime)}`);
     console.log(`📊 Status: ${status}, Late minutes: ${lateMinutes}`);
     
     const attendance = new Attendance({
@@ -433,23 +465,15 @@ router.post('/checkout', auth, async (req, res) => {
     
     console.log('🔍 POST /attendance/checkout - User:', req.user, 'EmployeeId:', employeeId);
     
-    // Find today's attendance record
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
+    // Find the most recent unchecked attendance record
     const attendance = await Attendance.findOne({
       employeeId,
-      date: {
-        $gte: today,
-        $lt: tomorrow
-      },
+      'checkOut.time': { $exists: false },
       isActive: true
-    });
+    }).sort({ checkIn: -1 });
     
     if (!attendance) {
-      return res.status(404).json({ success: false, message: 'No check-in record found for today' });
+      return res.status(404).json({ success: false, message: 'No active check-in record found' });
     }
     
     if (attendance.checkOut && attendance.checkOut.time) {
@@ -473,13 +497,19 @@ router.post('/checkout', auth, async (req, res) => {
       };
     }
     
-    const checkOutTime = timezoneUtils.getCurrentTime();
+    const checkOutTime = getCurrentISTTime();
     
-    console.log(`🕐 Check-out time (US Central): ${timezoneUtils.formatDateTime(checkOutTime)}`);
+    console.log(`🕐 Check-out time (IST): ${formatToISTTime(checkOutTime)}`);
     
-    // Calculate working hours
+    // Calculate working hours with cross-midnight support
     const checkInTime = attendance.checkIn.time;
-    const workingHours = (checkOutTime - checkInTime) / (1000 * 60 * 60); // in hours
+    let workingHours = (checkOutTime - checkInTime) / (1000 * 60 * 60); // in hours
+    
+    // Handle cross-midnight shifts
+    if (workingHours < 0) {
+      workingHours += 24; // Add 24 hours for next day
+    }
+    workingHours = Math.max(0, workingHours); // Ensure positive
     
     // Get attendance settings to check half-day threshold
     const AttendanceSettings = require('../models/AttendanceSettings.js');
@@ -680,13 +710,29 @@ router.get('/statistics/:employeeId', auth, async (req, res) => {
         record.checkIn?.time &&
         record.checkOut?.time
     );
+    // Calculate working hours properly
+    const totalWorkingHours = validRecords.reduce((sum, record) => {
+      const workingHours = record.totalWorkingHours || 0;
+      console.log(`📊 Record ${record._id}: workingHours=${workingHours}`);
+      return sum + workingHours;
+    }, 0);
+
+    // Calculate overtime hours properly
+    const totalOvertimeHours = validRecords.reduce((sum, record) => {
+      const overtimeHours = (record.overtimeMinutes || 0) / 60;
+      console.log(`📊 Record ${record._id}: overtimeMinutes=${record.overtimeMinutes}, overtimeHours=${overtimeHours}`);
+      return sum + overtimeHours;
+    }, 0);
+
+    console.log(`📊 Statistics for ${period}: totalWorkingHours=${totalWorkingHours}, totalOvertimeHours=${totalOvertimeHours}, validRecords=${validRecords.length}`);
+
     const statistics = {
       totalDays: attendanceRecords.length,
       presentDays: attendanceRecords.filter(record => record.status === 'Present').length,
       absentDays: attendanceRecords.filter(record => record.status === 'Absent').length,
       lateDays: attendanceRecords.filter(record => record.status === 'Late').length,
-      totalWorkingHours: validRecords.reduce((sum, record) => sum + (record.totalWorkingHours || 0), 0),
-      totalOvertimeHours: validRecords.reduce((sum, record) => sum + (record.overtimeMinutes || 0), 0) / 60,
+      totalWorkingHours: totalWorkingHours,
+      totalOvertimeHours: totalOvertimeHours,
       averageProductionHours: validRecords.length
         ? validRecords.reduce((sum, record) => sum + (record.productionHours || 0), 0) / validRecords.length
         : 0
