@@ -481,6 +481,17 @@ router.post('/checkout', auth, async (req, res) => {
     const checkInTime = attendance.checkIn.time;
     const workingHours = (checkOutTime - checkInTime) / (1000 * 60 * 60); // in hours
     
+    // Get attendance settings to check half-day threshold
+    const AttendanceSettings = require('../models/AttendanceSettings.js');
+    const settings = await AttendanceSettings.findOne();
+    const halfDayThreshold = settings?.halfDayThresholdHours || 4; // Default 4 hours
+    
+    // Check if working hours are below half-day threshold
+    if (workingHours < halfDayThreshold) {
+      attendance.status = 'Half Day';
+      console.log(`🕐 Employee worked ${workingHours.toFixed(2)} hours, marking as Half Day (threshold: ${halfDayThreshold} hours)`);
+    }
+    
     // Calculate overtime (assuming 8-hour workday)
     const standardWorkHours = 8;
     const overtimeHours = Math.max(0, workingHours - standardWorkHours);
@@ -773,6 +784,63 @@ router.delete('/reset/:employeeId', [auth, role(['admin', 'hr'])], async (req, r
     });
   } catch (error) {
     console.error('Error resetting attendance:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Fix half-day records (admin only)
+router.post('/fix-halfday', [auth, role(['admin', 'hr'])], async (req, res) => {
+  try {
+    console.log('🔍 POST /attendance/fix-halfday - User:', req.user);
+    
+    // Get attendance settings
+    const AttendanceSettings = require('../models/AttendanceSettings.js');
+    const settings = await AttendanceSettings.findOne();
+    const halfDayThreshold = settings?.halfDayThresholdHours || 4;
+    
+    // Find attendance records that have both check-in and check-out but are not marked as Half Day
+    const recordsToCheck = await Attendance.find({
+      checkIn: { $exists: true },
+      checkOut: { $exists: true },
+      status: { $in: ['Present', 'Late'] },
+      isActive: true
+    }).populate('employeeId', 'firstName lastName');
+    
+    let updatedCount = 0;
+    const updatedRecords = [];
+    
+    for (const record of recordsToCheck) {
+      const checkInTime = new Date(record.checkIn.time);
+      const checkOutTime = new Date(record.checkOut.time);
+      const workingHours = (checkOutTime - checkInTime) / (1000 * 60 * 60);
+      
+      if (workingHours < halfDayThreshold) {
+        await Attendance.findByIdAndUpdate(record._id, {
+          status: 'Half Day'
+        });
+        
+        updatedRecords.push({
+          employeeName: `${record.employeeId.firstName} ${record.employeeId.lastName}`,
+          date: record.date,
+          workingHours: workingHours.toFixed(2),
+          previousStatus: record.status
+        });
+        
+        updatedCount++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Fixed ${updatedCount} records to Half Day status`,
+      data: {
+        updatedCount,
+        halfDayThreshold,
+        updatedRecords
+      }
+    });
+  } catch (error) {
+    console.error('Error fixing half-day records:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });

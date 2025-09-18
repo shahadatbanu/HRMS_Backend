@@ -1184,6 +1184,16 @@ router.post('/:id/interviews', async (req, res) => {
   try {
     const { scheduledDate, interviewLevel, interviewer, interviewLink, notes } = req.body;
 
+    // DEBUG: Log incoming data
+    console.log('🔍 BACKEND INTERVIEW TIME DEBUG - Received Data:');
+    console.log('Raw scheduledDate from frontend:', scheduledDate);
+    console.log('scheduledDate type:', typeof scheduledDate);
+    console.log('Parsed Date object:', new Date(scheduledDate));
+    console.log('Parsed date ISO:', new Date(scheduledDate).toISOString());
+    console.log('Parsed date IST:', new Date(scheduledDate).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    console.log('Server timezone offset:', new Date().getTimezoneOffset());
+    console.log('Server current time:', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+
     if (!scheduledDate || !interviewLevel || !interviewer) {
       return res.status(400).json({
         success: false,
@@ -1235,16 +1245,34 @@ router.post('/:id/interviews', async (req, res) => {
     }
 
     // Add new interview
-    candidate.interviews.push({
+    const interviewData = {
       scheduledDate: new Date(scheduledDate),
       interviewLevel,
       interviewer,
       interviewLink,
       notes,
       createdBy: employee._id
-    });
+    };
+    
+    // DEBUG: Log what we're storing
+    console.log('🔍 BACKEND INTERVIEW TIME DEBUG - Storing to DB:');
+    console.log('Interview data to store:', interviewData);
+    console.log('scheduledDate being stored:', interviewData.scheduledDate);
+    console.log('scheduledDate ISO:', interviewData.scheduledDate.toISOString());
+    console.log('scheduledDate IST:', interviewData.scheduledDate.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    
+    candidate.interviews.push(interviewData);
 
     await candidate.save();
+    
+    // DEBUG: Log what was actually saved
+    console.log('🔍 BACKEND INTERVIEW TIME DEBUG - After Save:');
+    const savedInterview = candidate.interviews[candidate.interviews.length - 1];
+    console.log('Saved interview:', savedInterview);
+    console.log('Saved scheduledDate:', savedInterview.scheduledDate);
+    console.log('Saved date type:', typeof savedInterview.scheduledDate);
+    console.log('Saved date ISO:', savedInterview.scheduledDate.toISOString());
+    console.log('Saved date IST:', savedInterview.scheduledDate.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
 
     // Log activity
     try {
