@@ -60,7 +60,14 @@ const attendanceSettingsSchema = new mongoose.Schema({
     max: 12
   },
   
-
+  // Auto checkout hours (hours after which employee can check in again)
+  autoCheckoutHours: {
+    type: Number,
+    default: 16, // 16 hours
+    min: 1,
+    max: 48, // Maximum 48 hours
+    description: 'Cooldown period in hours before employee can check in again after first punch-in'
+  },
   
   // Additional notes or description
   description: {

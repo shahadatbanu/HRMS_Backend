@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { markAbsencesForToday } = require('../routes/attendanceSettings.js');
+const { markAbsencesForToday } = require('./attendanceService.js');
 const AttendanceSettings = require('../models/AttendanceSettings.js');
 
 class CronService {
@@ -117,6 +117,8 @@ class CronService {
                         this.isInitialized &&
                         isAutoAbsenceEnabled;
     
+    const nextRun = isAutoAbsenceEnabled ? await this.getNextRunTime() : null;
+    
     return {
       isInitialized: this.isInitialized,
       autoAbsenceEnabled: isAutoAbsenceEnabled,
@@ -124,7 +126,7 @@ class CronService {
         running: Boolean(isJobRunning),
         lastRun: this.lastRun,
         lastRunResult: this.lastRunResult,
-        nextRun: isAutoAbsenceEnabled ? this.getNextRunTime() : null,
+        nextRun: nextRun,
         runCount: this.runCount,
         errorCount: this.errorCount,
         successRate: this.runCount > 0 ? ((this.runCount - this.errorCount) / this.runCount * 100).toFixed(1) : 0
@@ -133,8 +135,14 @@ class CronService {
   }
 
   // Get next run time
-  getNextRunTime() {
-    if (!this.absenceMarkingJob || !this.absenceMarkingJob.running) {
+  async getNextRunTime() {
+    // Check if auto absence marking is enabled
+    const settings = await AttendanceSettings.findOne();
+    if (!settings || !settings.autoAbsenceEnabled) {
+      return null;
+    }
+    
+    if (!this.absenceMarkingJob) {
       return null;
     }
     
@@ -143,10 +151,11 @@ class CronService {
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    // For now, return a basic calculation
-    // In a real implementation, you'd need to get settings synchronously or cache them
+    // Get the scheduled time from settings
+    const [hour, minute] = settings.absenceMarkingTime.split(':').map(Number);
     const nextRun = new Date(tomorrow);
-    nextRun.setHours(12, 0, 0, 0); // Default to 12:00 PM
+    nextRun.setHours(hour, minute, 0, 0);
+    
     return nextRun;
   }
 
@@ -187,6 +196,17 @@ class CronService {
                         this.isInitialized;
     
     if (!isJobRunning) return 'stopped';
+    
+    // Check if the function is actually callable (runtime validation)
+    try {
+      const { markAbsencesForToday } = require('./attendanceService.js');
+      if (typeof markAbsencesForToday !== 'function') {
+        return 'unhealthy';
+      }
+    } catch (error) {
+      return 'unhealthy';
+    }
+    
     if (this.errorCount > this.runCount * 0.5) return 'unhealthy';
     if (this.errorCount > 0) return 'warning';
     return 'healthy';
