@@ -85,6 +85,16 @@ const EmployeeSchema = new mongoose.Schema({
     note: { type: String },
   }],
 
+  // Attachments (generic employee documents)
+  attachments: [{
+    fileName: { type: String },
+    filePath: { type: String },
+    fileType: { type: String },
+    uploadedBy: { type: String },
+    uploadedOn: { type: Date, default: Date.now },
+    note: { type: String },
+  }],
+
   // Team structure
   teamLeadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // For recruiters to reference their team lead
 

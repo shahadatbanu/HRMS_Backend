@@ -18,6 +18,7 @@ const promotionsRoutes = require('./routes/promotions.js');
 const todosRoutes = require('./routes/todos.js');
 const activitiesRoutes = require('./routes/activities.js');
 const performanceSettingsRoutes = require('./routes/performanceSettings.js');
+const candidateActivityThresholdRoutes = require('./routes/candidateActivityThreshold.js');
 const teamLeadsRoutes = require('./routes/teamLeads.js');
 
 
@@ -129,6 +130,9 @@ app.use("/testing", (req, res) => {
 
 // Performance settings routes
 app.use('/api/performance-settings', performanceSettingsRoutes);
+
+// Candidate activity threshold routes
+app.use('/api/candidate-activity-threshold', candidateActivityThresholdRoutes);
 
 // Serve static assets with proper cache headers
 app.use(express.static(path.join(__dirname, '../react/build'), {

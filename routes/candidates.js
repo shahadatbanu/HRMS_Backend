@@ -3073,6 +3073,10 @@ router.get('/dashboard/activity-leaderboard', async (req, res) => {
   try {
     const { filter = 'monthly', page = 1, limit = 7 } = req.query;
     
+    // Get current threshold settings
+    const CandidateActivityThreshold = require('../models/CandidateActivityThreshold');
+    const thresholdSettings = await CandidateActivityThreshold.getCurrentSettings();
+    
     // Build date filter for activity calculation based on the selected period
     const now = new Date();
     let activityDateFilter = {};
@@ -3194,28 +3198,13 @@ router.get('/dashboard/activity-leaderboard', async (req, res) => {
       // Remove limit here - we'll apply it after filtering by status
     ]);
 
-    // Calculate activity status for each candidate and filter for Super Active and Active only
+    // Calculate activity status for each candidate using configurable thresholds
     const leaderboardData = candidateActivity
       .map((candidate, index) => {
         const { submissionsCount, interviewsCount, offersCount, activityScore } = candidate;
         
-        // Determine activity status based on thresholds
-        let status = 'Dead';
-        let statusClass = 'danger';
-        
-        if (activityScore >= 20) {
-          status = 'Super Active';
-          statusClass = 'success';
-        } else if (activityScore >= 10) {
-          status = 'Active';
-          statusClass = 'primary';
-        } else if (activityScore >= 5) {
-          status = 'Moderate';
-          statusClass = 'warning';
-        } else if (activityScore >= 1) {
-          status = 'Low';
-          statusClass = 'info';
-        }
+        // Use configurable threshold settings
+        const activityLevel = thresholdSettings.calculateActivityLevel(activityScore);
         
         return {
           rank: index + 1,
@@ -3225,11 +3214,14 @@ router.get('/dashboard/activity-leaderboard', async (req, res) => {
           interviews: interviewsCount,
           offers: offersCount,
           activityScore: activityScore,
-          status: status,
-          statusClass: statusClass
+          status: activityLevel.level,
+          statusClass: activityLevel.color
         };
       })
-      .filter(candidate => candidate.status === 'Super Active' || candidate.status === 'Active');
+      .filter(candidate => 
+        candidate.status === thresholdSettings.levelLabels.superActive || 
+        candidate.status === thresholdSettings.levelLabels.active
+      );
 
     // For dashboard (limit=7), show only top 7. For view all pages, use pagination
     let finalData;
@@ -3264,6 +3256,10 @@ router.get('/dashboard/activity-leaderboard', async (req, res) => {
 router.get('/dashboard/dead-low-candidates', async (req, res) => {
   try {
     const { filter = 'monthly', page = 1, limit = 7 } = req.query;
+    
+    // Get current threshold settings
+    const CandidateActivityThreshold = require('../models/CandidateActivityThreshold');
+    const thresholdSettings = await CandidateActivityThreshold.getCurrentSettings();
     
     // Build date filter for activity calculation based on the selected period
     const now = new Date();
@@ -3386,28 +3382,13 @@ router.get('/dashboard/dead-low-candidates', async (req, res) => {
       // Remove limit here - we'll apply it after filtering by status
     ]);
 
-    // Calculate activity status for each candidate and filter for Dead and Low only
+    // Calculate activity status for each candidate using configurable thresholds
     const deadLowData = candidateActivity
       .map((candidate, index) => {
         const { submissionsCount, interviewsCount, offersCount, activityScore } = candidate;
         
-        // Determine activity status based on thresholds
-        let status = 'Dead';
-        let statusClass = 'danger';
-        
-        if (activityScore >= 20) {
-          status = 'Super Active';
-          statusClass = 'success';
-        } else if (activityScore >= 10) {
-          status = 'Active';
-          statusClass = 'primary';
-        } else if (activityScore >= 5) {
-          status = 'Moderate';
-          statusClass = 'warning';
-        } else if (activityScore >= 1) {
-          status = 'Low';
-          statusClass = 'info';
-        }
+        // Use configurable threshold settings
+        const activityLevel = thresholdSettings.calculateActivityLevel(activityScore);
         
         return {
           rank: index + 1,
@@ -3417,11 +3398,14 @@ router.get('/dashboard/dead-low-candidates', async (req, res) => {
           interviews: interviewsCount,
           offers: offersCount,
           activityScore: activityScore,
-          status: status,
-          statusClass: statusClass
+          status: activityLevel.level,
+          statusClass: activityLevel.color
         };
       })
-      .filter(candidate => candidate.status === 'Dead' || candidate.status === 'Low');
+      .filter(candidate => 
+        candidate.status === thresholdSettings.levelLabels.dead || 
+        candidate.status === thresholdSettings.levelLabels.low
+      );
 
     // For dashboard (limit=7), show only top 7. For view all pages, use pagination
     let finalData;
