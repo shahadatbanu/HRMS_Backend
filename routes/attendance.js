@@ -25,12 +25,9 @@ router.get('/', auth, async (req, res) => {
     
     // Filter by date range
     if (startDate && endDate) {
-      // Create start and end of day for proper date comparison
-      const startOfDay = new Date(startDate);
-      startOfDay.setHours(0, 0, 0, 0);
-      
-      const endOfDay = new Date(endDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      // Use IST timezone for date filtering to match stored records
+      const startOfDay = timezoneUtils.getStartOfDay(new Date(startDate));
+      const endOfDay = timezoneUtils.getEndOfDay(new Date(endDate));
       
       query.date = {
         $gte: startOfDay,
@@ -90,12 +87,9 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
     if (startDate && endDate) {
       console.log('📅 Employee date filter - startDate:', startDate, 'endDate:', endDate);
       
-      // Create start and end of day for proper date comparison
-      const startOfDay = new Date(startDate);
-      startOfDay.setHours(0, 0, 0, 0);
-      
-      const endOfDay = new Date(endDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      // Use IST timezone for date filtering to match stored records
+      const startOfDay = timezoneUtils.getStartOfDay(new Date(startDate));
+      const endOfDay = timezoneUtils.getEndOfDay(new Date(endDate));
       
       console.log('📅 Employee date filter - startOfDay:', startOfDay, 'endOfDay:', endOfDay);
       
@@ -370,16 +364,21 @@ router.post('/checkin', auth, async (req, res) => {
     const AttendanceSettings = require('../models/AttendanceSettings.js');
     const settings = await AttendanceSettings.findOne();
     const workingHoursStart = settings?.workingHours?.startTime || '09:00'; // Default to 9:00 AM
+    const lateThresholdMinutes = settings?.lateThresholdMinutes || 15; // Default to 15 minutes
     
     // Parse the start time (format: "HH:MM")
     const [startHour, startMinute] = workingHoursStart.split(':').map(Number);
     const startTime = new Date(today);
     startTime.setHours(startHour, startMinute, 0, 0);
     
-    let status = 'Present';
+    // Calculate the late threshold time (start time + threshold minutes)
+    const lateThresholdTime = new Date(startTime.getTime() + (lateThresholdMinutes * 60 * 1000));
+    
+    let status = 'On Time';
     let lateMinutes = 0;
     
-    if (checkInTime > startTime) {
+    // Only mark as late if check-in is AFTER the late threshold time
+    if (checkInTime > lateThresholdTime) {
       status = 'Late';
       lateMinutes = Math.floor((checkInTime - startTime) / (1000 * 60));
     }
@@ -387,6 +386,7 @@ router.post('/checkin', auth, async (req, res) => {
     console.log(`🕐 Check-in time (IST): ${formatToISTTime(checkInTime)}`);
     console.log(`🕐 Configured start time: ${workingHoursStart} (IST)`);
     console.log(`🕐 Start time (IST): ${formatToISTTime(startTime)}`);
+    console.log(`🕐 Late threshold time (IST): ${formatToISTTime(lateThresholdTime)} (${lateThresholdMinutes} minutes after start)`);
     console.log(`📊 Status: ${status}, Late minutes: ${lateMinutes}`);
     
     const attendance = new Attendance({

@@ -140,11 +140,8 @@ router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
     // Removed debug log to reduce console noise
     
     const { date } = req.query;
-    const targetDate = date ? new Date(date) : new Date();
-    targetDate.setHours(0, 0, 0, 0);
-    
-    const nextDay = new Date(targetDate);
-    nextDay.setDate(nextDay.getDate() + 1);
+    const targetDate = date ? timezoneUtils.getStartOfDay(new Date(date)) : timezoneUtils.getStartOfDay();
+    const nextDay = timezoneUtils.getEndOfDay(targetDate);
     
     // Get all employees
     const totalEmployees = await Employee.countDocuments({ isActive: true });
@@ -171,8 +168,9 @@ router.get('/absence-stats', auth, role(['admin', 'hr']), async (req, res) => {
     
     attendanceRecords.forEach(record => {
       switch (record.status) {
+        case 'On Time':
         case 'Present':
-          stats.onTime++;  // Count as 'onTime' (on time)
+          stats.onTime++;  // Count both 'On Time' and 'Present' as onTime
           break;
         case 'Absent':
           stats.absent++;
