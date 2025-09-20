@@ -35,6 +35,32 @@ const upload = multer({
   }
 });
 
+// Separate multer for attachments (allow common docs & images)
+const attachmentFileFilter = (req, file, cb) => {
+  const allowed = [
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/plain'
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Unsupported file type'), false);
+  }
+};
+
+const uploadAttachment = multer({
+  storage,
+  fileFilter: attachmentFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
+
 // Protect all employee routes
 router.use(auth);
 
@@ -178,6 +204,64 @@ router.post('/upload/asset-image', upload.single('image'), async (req, res) => {
   } catch (error) {
     console.error('Asset image upload error:', error);
     res.status(500).json({ message: 'Failed to upload asset image' });
+  }
+});
+
+// Attachment upload endpoint
+router.post('/upload/attachment', uploadAttachment.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file provided' });
+    }
+    res.json({
+      message: 'Attachment uploaded successfully',
+      fileName: req.file.originalname,
+      filePath: req.file.filename,
+      fileType: req.file.mimetype
+    });
+  } catch (error) {
+    console.error('Attachment upload error:', error);
+    res.status(500).json({ message: 'Failed to upload attachment' });
+  }
+});
+
+// Delete attachment endpoint
+router.delete('/:id/attachments/:attachmentIndex', async (req, res) => {
+  try {
+    const { id, attachmentIndex } = req.params;
+    const index = parseInt(attachmentIndex);
+    
+    if (isNaN(index)) {
+      return res.status(400).json({ message: 'Invalid attachment index' });
+    }
+
+    const employee = await Employee.findById(id);
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    if (!employee.attachments || index >= employee.attachments.length || index < 0) {
+      return res.status(404).json({ message: 'Attachment not found' });
+    }
+
+    const attachment = employee.attachments[index];
+    
+    // Remove the attachment from the array
+    employee.attachments.splice(index, 1);
+    await employee.save();
+
+    // Optionally delete the physical file (commented out for safety)
+    // const fs = require('fs');
+    // const path = require('path');
+    // const filePath = path.join(__dirname, '../uploads', attachment.filePath);
+    // if (fs.existsSync(filePath)) {
+    //   fs.unlinkSync(filePath);
+    // }
+
+    res.json({ message: 'Attachment deleted successfully' });
+  } catch (error) {
+    console.error('Attachment deletion error:', error);
+    res.status(500).json({ message: 'Failed to delete attachment' });
   }
 });
 
@@ -376,6 +460,17 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
         note: a.note,
       }));
     }
+  // Update attachments (admin/hr only)
+  if (req.body.attachments && (req.user?.role === 'admin' || req.user?.role === 'hr')) {
+    employee.attachments = req.body.attachments.map(att => ({
+      fileName: att.fileName,
+      filePath: att.filePath,
+      fileType: att.fileType,
+      uploadedBy: att.uploadedBy,
+      uploadedOn: att.uploadedOn ? new Date(att.uploadedOn) : undefined,
+      note: att.note,
+    }));
+  }
     if (req.file) employee.profileImage = req.file.filename;
     await employee.save();
     
