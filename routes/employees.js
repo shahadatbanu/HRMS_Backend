@@ -265,6 +265,74 @@ router.delete('/:id/attachments/:attachmentIndex', async (req, res) => {
   }
 });
 
+// Secure attachment download for the logged-in employee only
+router.get('/attachments/:fileName', async (req, res) => {
+  try {
+    const { fileName } = req.params;
+    // Find current employee with attachments
+    const me = await Employee.findById(req.user._id).select('attachments firstName lastName');
+    if (!me) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    // Check ownership of the requested file
+    const att = (me.attachments || []).find(a => a.filePath === fileName);
+    if (!att) {
+      return res.status(403).json({ message: 'You are not authorized to access this file' });
+    }
+
+    const path = require('path');
+    const fs = require('fs');
+    const absolutePath = path.join(__dirname, '..', 'uploads', fileName);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    // Set headers and stream
+    const mime = require('mime-types');
+    const contentType = att.fileType || mime.lookup(fileName) || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${att.fileName || fileName}"`);
+
+    const stream = fs.createReadStream(absolutePath);
+    stream.on('error', () => res.status(500).end());
+    stream.pipe(res);
+  } catch (error) {
+    console.error('Secure attachment download error:', error);
+    res.status(500).json({ message: 'Failed to download attachment' });
+  }
+});
+
+// List my attachments with pagination
+router.get('/me/attachments', async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
+    const me = await Employee.findById(req.user._id).select('attachments');
+    if (!me) return res.status(404).json({ success: false, message: 'Employee not found' });
+
+    // Sort newest first by uploadedOn (fallback to filePath)
+    const attachments = (me.attachments || []).slice().sort((a, b) => {
+      const at = a.uploadedOn ? new Date(a.uploadedOn).getTime() : 0;
+      const bt = b.uploadedOn ? new Date(b.uploadedOn).getTime() : 0;
+      if (bt !== at) return bt - at;
+      const af = (a.filePath || '').toLowerCase();
+      const bf = (b.filePath || '').toLowerCase();
+      return af < bf ? -1 : af > bf ? 1 : 0;
+    });
+
+    const total = attachments.length;
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const data = attachments.slice(start, end);
+
+    res.json({ success: true, data, page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (error) {
+    console.error('List attachments error:', error);
+    res.status(500).json({ success: false, message: 'Failed to list attachments' });
+  }
+});
+
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {

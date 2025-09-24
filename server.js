@@ -55,16 +55,18 @@ app.get('/test', (req, res) => {
   res.json({ message: 'Server is running!' });
 });
 
-// Serve uploaded images with proper cache headers
+// Serve uploads (restrict caching to images only; other files should be fetched via secure endpoints)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   maxAge: '1y', // Cache for 1 year
   etag: true,
   lastModified: true,
   setHeaders: (res, path) => {
-    // Set cache headers for images
+    // Cache only images; avoid encouraging public caching for docs
     if (path.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Expires', new Date(Date.now() + 31536000000).toUTCString());
+    } else if (path.match(/\.(pdf|doc|docx|xls|xlsx|txt)$/i)) {
+      res.setHeader('Cache-Control', 'no-store');
     }
   }
 }));
