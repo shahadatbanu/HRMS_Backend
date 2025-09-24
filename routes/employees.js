@@ -308,7 +308,7 @@ router.get('/me/attachments', async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
-    const me = await Employee.findById(req.user._id).select('attachments');
+    const me = await Employee.findById(req.user._id).select('attachments lastSeenAttachmentsAt seenAttachmentFiles');
     if (!me) return res.status(404).json({ success: false, message: 'Employee not found' });
 
     // Sort newest first by uploadedOn (fallback to filePath)
@@ -322,14 +322,54 @@ router.get('/me/attachments', async (req, res) => {
     });
 
     const total = attachments.length;
+    const lastSeen = me.lastSeenAttachmentsAt ? new Date(me.lastSeenAttachmentsAt).getTime() : 0;
+    const seenSet = new Set(me.seenAttachmentFiles || []);
+    const newCount = attachments.filter(a => {
+      const ts = a.uploadedOn ? new Date(a.uploadedOn).getTime() : 0;
+      // Consider new only if newer than lastSeen AND not individually marked as seen
+      return (ts > lastSeen) && !seenSet.has(a.filePath);
+    }).length;
     const start = (page - 1) * limit;
     const end = start + limit;
-    const data = attachments.slice(start, end);
+    const data = attachments.slice(start, end).map(a => ({
+      ...a.toObject ? a.toObject() : a,
+      isNew: (((a.uploadedOn ? new Date(a.uploadedOn).getTime() : 0) > lastSeen) && !seenSet.has(a.filePath))
+    }));
 
-    res.json({ success: true, data, page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) });
+    res.json({ success: true, data, page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)), lastSeenAttachmentsAt: me.lastSeenAttachmentsAt || null, newCount });
   } catch (error) {
     console.error('List attachments error:', error);
     res.status(500).json({ success: false, message: 'Failed to list attachments' });
+  }
+});
+
+// Mark all attachments seen (set lastSeenAttachmentsAt to now)
+router.post('/me/attachments/mark-seen', async (req, res) => {
+  try {
+    const me = await Employee.findById(req.user._id).select('_id');
+    if (!me) return res.status(404).json({ success: false, message: 'Employee not found' });
+    const now = new Date();
+    await Employee.updateOne({ _id: me._id }, { $set: { lastSeenAttachmentsAt: now } });
+    res.json({ success: true, lastSeenAttachmentsAt: now });
+  } catch (error) {
+    console.error('Mark seen error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark attachments as seen' });
+  }
+});
+
+// Mark a specific attachment as seen by filePath
+router.post('/me/attachments/:filePath/mark-seen', async (req, res) => {
+  try {
+    const { filePath } = req.params;
+    if (!filePath) return res.status(400).json({ success: false, message: 'filePath required' });
+    const me = await Employee.findById(req.user._id).select('_id seenAttachmentFiles');
+    if (!me) return res.status(404).json({ success: false, message: 'Employee not found' });
+    const decoded = decodeURIComponent(filePath);
+    await Employee.updateOne({ _id: me._id }, { $addToSet: { seenAttachmentFiles: decoded } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Mark single seen error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark attachment as seen' });
   }
 });
 
