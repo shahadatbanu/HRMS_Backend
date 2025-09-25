@@ -177,10 +177,8 @@ router.get('/employee/:employeeId', auth, async (req, res) => {
 router.get('/employee/:employeeId/today', auth, async (req, res) => {
   try {
     const { employeeId } = req.params;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const today = timezoneUtils.getStartOfDay();
+    const tomorrow = timezoneUtils.getEndOfDay();
     
     console.log('🔍 GET /attendance/employee/:employeeId/today - User:', req.user, 'EmployeeId:', employeeId);
     
@@ -263,6 +261,68 @@ router.get('/employee/:employeeId/today', auth, async (req, res) => {
   }
 });
 
+// Get current re-check-in cooldown status for an employee
+router.get('/cooldown/:employeeId', auth, async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+
+    // Find the most recent record without checkout
+    const existingAttendance = await Attendance.findOne({
+      employeeId,
+      'checkOut.time': { $exists: false },
+      isActive: true
+    }).sort({ createdAt: -1 });
+
+    if (!existingAttendance) {
+      return res.json({ success: true, data: { active: false } });
+    }
+
+    // Settings
+    const AttendanceSettings = require('../models/AttendanceSettings.js');
+    const settings = await AttendanceSettings.findOne();
+    const autoCheckoutHours = settings?.autoCheckoutHours || 16;
+    const now = getCurrentISTTime();
+
+    if (existingAttendance.checkIn && existingAttendance.checkIn.time) {
+      const retryAt = new Date(existingAttendance.checkIn.time.getTime() + (autoCheckoutHours * 60 * 60 * 1000));
+      if (now < retryAt) {
+        return res.json({
+          success: true,
+          data: {
+            active: true,
+            code: 'PREVIOUS_SHIFT_OPEN',
+            retryAt,
+            remainingHours: (retryAt - now) / (1000 * 60 * 60),
+            message: 'Please check out from previous shift first'
+          }
+        });
+      }
+      return res.json({ success: true, data: { active: false } });
+    }
+
+    // Absent mark cooldown
+    const referenceTime = existingAttendance.createdAt || existingAttendance.date;
+    const retryAt = new Date(referenceTime.getTime() + (autoCheckoutHours * 60 * 60 * 1000));
+    if (now < retryAt) {
+      return res.json({
+        success: true,
+        data: {
+          active: true,
+          code: 'RECHECKIN_THRESHOLD',
+          retryAt,
+          remainingHours: (retryAt - now) / (1000 * 60 * 60),
+          message: `Re-check-in allowed after ${autoCheckoutHours} hours from last absence.`
+        }
+      });
+    }
+
+    return res.json({ success: true, data: { active: false } });
+  } catch (error) {
+    console.error('Error fetching cooldown:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // Check-in
 router.post('/checkin', auth, async (req, res) => {
   try {
@@ -280,41 +340,77 @@ router.post('/checkin', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
     
-    // Check if employee already has unchecked attendance
+    // Find the most recent attendance without checkout (could be an active shift or an Absent mark)
     const existingAttendance = await Attendance.findOne({
       employeeId,
       'checkOut.time': { $exists: false },
       isActive: true
-    });
+    }).sort({ createdAt: -1 });
     
     if (existingAttendance) {
-      // Get attendance settings for auto checkout hours
+      // Get attendance settings for auto checkout / re-checkin threshold hours
       const AttendanceSettings = require('../models/AttendanceSettings.js');
       const settings = await AttendanceSettings.findOne();
       const autoCheckoutHours = settings?.autoCheckoutHours || 16; // Default to 16 hours
-      
-      const checkInTime = existingAttendance.checkIn.time;
+
       const now = getCurrentISTTime();
-      const hoursSinceCheckIn = (now - checkInTime) / (1000 * 60 * 60);
-      
-      if (hoursSinceCheckIn >= autoCheckoutHours) {
-        // Auto checkout the old record after configured hours
-        existingAttendance.checkOut = {
-          time: new Date(checkInTime.getTime() + (autoCheckoutHours * 60 * 60 * 1000)),
-          location: 'Auto Checkout',
-          locationName: `System Auto Checkout (${autoCheckoutHours}h limit)`,
-          geolocation: null
-        };
-        existingAttendance.totalWorkingHours = autoCheckoutHours;
-        existingAttendance.notes = `Auto checked out after ${autoCheckoutHours} hours`;
-        await existingAttendance.save();
-        
-        console.log(`✅ Auto checked out old record after ${autoCheckoutHours} hours for ${employeeId}`);
+
+      if (existingAttendance.checkIn && existingAttendance.checkIn.time) {
+        // There is an active shift with a real check-in
+        const checkInTime = existingAttendance.checkIn.time;
+        const hoursSinceCheckIn = (now - checkInTime) / (1000 * 60 * 60);
+
+        if (hoursSinceCheckIn >= autoCheckoutHours) {
+          // Auto checkout the old record after configured hours
+          existingAttendance.checkOut = {
+            time: new Date(checkInTime.getTime() + (autoCheckoutHours * 60 * 60 * 1000)),
+            location: 'Auto Checkout',
+            locationName: `System Auto Checkout (${autoCheckoutHours}h limit)`,
+            geolocation: null
+          };
+          existingAttendance.totalWorkingHours = autoCheckoutHours;
+          existingAttendance.notes = `Auto checked out after ${autoCheckoutHours} hours`;
+          await existingAttendance.save();
+
+          console.log(`✅ Auto checked out old record after ${autoCheckoutHours} hours for ${employeeId}`);
+        } else {
+          const retryAt = new Date(existingAttendance.checkIn.time.getTime() + (autoCheckoutHours * 60 * 60 * 1000));
+          const remainingHours = Math.max(0, (retryAt - now) / (1000 * 60 * 60));
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Please check out from previous shift first',
+            code: 'PREVIOUS_SHIFT_OPEN',
+            retryAt,
+            remainingHours
+          });
+        }
       } else {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Please check out from previous shift first' 
-        });
+        // The last record is an Absent mark (no real check-in). Use the record creation time
+        // as the reference for the re-checkin threshold to prevent immediate next-day check-in.
+        const referenceTime = existingAttendance.createdAt || existingAttendance.date;
+        const hoursSinceAbsence = (now - referenceTime) / (1000 * 60 * 60);
+
+        if (hoursSinceAbsence >= autoCheckoutHours) {
+          // Close the absence record logically so it no longer blocks future check-ins
+          existingAttendance.checkOut = {
+            time: new Date(referenceTime.getTime() + (autoCheckoutHours * 60 * 60 * 1000)),
+            location: 'Auto Close',
+            locationName: `System lockout ended (${autoCheckoutHours}h after absence)`,
+            geolocation: null
+          };
+          existingAttendance.notes = `Absence lockout ended after ${autoCheckoutHours} hours`;
+          await existingAttendance.save();
+        } else {
+          const retryAt = new Date(referenceTime.getTime() + (autoCheckoutHours * 60 * 60 * 1000));
+          const remainingHours = Math.max(0, (retryAt - now) / (1000 * 60 * 60));
+          return res.status(400).json({
+            success: false,
+            message: `Re-check-in allowed after ${autoCheckoutHours} hours from last absence. Remaining: ${remainingHours.toFixed(2)}h`,
+            code: 'RECHECKIN_THRESHOLD',
+            retryAt,
+            remainingHours
+          });
+        }
       }
     }
     
