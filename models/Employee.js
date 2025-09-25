@@ -95,6 +95,11 @@ const EmployeeSchema = new mongoose.Schema({
     note: { type: String },
   }],
 
+  // Server-driven tracking of when the employee last viewed attachments
+  lastSeenAttachmentsAt: { type: Date },
+  // Optional per-file seen tracking to mark individual docs as seen without advancing timestamp
+  seenAttachmentFiles: { type: [String], default: [] },
+
   // Team structure
   teamLeadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // For recruiters to reference their team lead
 
